@@ -52,20 +52,17 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 // ── Event Listeners from Rust ──
 listen<string>("chat-token", (event) => {
-  if (!streamBuffer) console.log("[jarvis] First token received");
   streamBuffer += event.payload;
   updateStreamingBubble();
 });
 
 listen<{name: string, args: string}>("tool-start", (event) => {
-  console.log("[jarvis] Tool start:", event.payload.name);
   activeTool = { name: event.payload.name, args: event.payload.args, status: "running" };
   toolHistory.push(activeTool);
   updateToolDisplay();
 });
 
 listen<{name: string, result: string}>("tool-result", (event) => {
-  console.log("[jarvis] Tool result:", event.payload.name);
   if (activeTool) {
     activeTool.result = event.payload.result;
     activeTool.status = "done";
@@ -75,7 +72,6 @@ listen<{name: string, result: string}>("tool-result", (event) => {
 });
 
 listen<string>("chat-done", (_event) => {
-  console.log("[jarvis] Chat done, buffer length:", streamBuffer.length);
   if (streamBuffer) {
     messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] });
   }
@@ -95,11 +91,8 @@ async function sendMessage(text: string) {
   currentPanel = "chat";
   render();
   try {
-    console.log("[jarvis] Sending message:", text.slice(0, 50));
-    const result = await invoke("send_message", { message: text });
-    console.log("[jarvis] invoke result:", result);
+    await invoke("send_message", { message: text });
   } catch (e) {
-    console.error("[jarvis] invoke error:", e);
     messages.push({ id: uid(), role: "assistant", content: `Error: ${e}` });
     isStreaming = false;
     render();
@@ -458,16 +451,3 @@ function applyTheme() {
 // ── Init ──
 applyTheme();
 render();
-
-// Test IPC on startup
-(async () => {
-  try {
-    const result = await invoke<string>("ping");
-    console.log("[jarvis] IPC working:", result);
-  } catch (e) {
-    console.error("[jarvis] IPC FAILED:", e);
-    // Show error in UI
-    const app = document.getElementById("app");
-    if (app) app.innerHTML += `<div style="position:fixed;top:0;left:0;right:0;padding:10px;background:red;color:white;z-index:9999">IPC Error: ${e}</div>`;
-  }
-})();

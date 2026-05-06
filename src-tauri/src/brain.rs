@@ -187,7 +187,7 @@ impl Brain {
             match self.try_stream(system, messages, m, max_tokens, tx).await {
                 Ok(response) => return response,
                 Err(e) => {
-                    eprintln!("Model {} failed: {}", m, e);
+                    eprintln!("[brain] Model {} FAILED: {}", m, e);
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     continue;
                 }
@@ -216,7 +216,6 @@ impl Brain {
         });
 
         let url = format!("{}/v1/messages", self.config.base_url);
-        eprintln!("[brain] POST {} model={}", url, model);
 
         let response = self
             .client
@@ -230,7 +229,6 @@ impl Brain {
             .map_err(|e| format!("Request failed: {}", e))?;
 
         let status = response.status();
-        eprintln!("[brain] Response status: {}", status);
         if status.as_u16() == 429 {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             return Err("Rate limited".into());
@@ -334,7 +332,7 @@ impl Brain {
                     let existing = last.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     *last = json!({
                         "role": role,
-                        "content": format!("{}\n\n{}", existing, content)
+                        "content": [{"type": "text", "text": format!("{}\n\n{}", existing, content)}]
                     });
                     continue;
                 }
@@ -342,13 +340,15 @@ impl Brain {
 
             messages.push(json!({
                 "role": role,
-                "content": content
+                "content": [{"type": "text", "text": content}]
             }));
         }
 
         // Ensure first message is from user
         if messages.first().and_then(|m| m.get("role")).and_then(|r| r.as_str()) != Some("user") {
-            messages.remove(0);
+            if !messages.is_empty() {
+                messages.remove(0);
+            }
         }
 
         messages
