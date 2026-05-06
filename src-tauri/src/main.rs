@@ -3,9 +3,11 @@
 mod brain;
 mod config;
 mod tools;
+mod vault;
 
 use brain::{Brain, StreamEvent};
 use config::Config;
+use vault::VaultIndex;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
@@ -13,6 +15,7 @@ use tokio::sync::Mutex;
 struct AppState {
     brain: Arc<Mutex<Brain>>,
     config: Arc<Mutex<Config>>,
+    vault: Arc<VaultIndex>,
 }
 
 #[tauri::command]
@@ -78,6 +81,26 @@ async fn save_config(
     Ok(())
 }
 
+#[tauri::command]
+async fn search_vault(
+    state: tauri::State<'_, AppState>,
+    query: String,
+) -> Result<Vec<vault::SearchResult>, String> {
+    Ok(state.vault.search(&query, 8))
+}
+
+#[tauri::command]
+async fn reindex_vault(
+    state: tauri::State<'_, AppState>,
+    force: bool,
+) -> Result<String, String> {
+    let stats = state.vault.index(force);
+    Ok(format!(
+        "Indexed: {}, Skipped: {}, Removed: {}, Total chunks: {}",
+        stats.indexed, stats.skipped, stats.removed, stats.total_chunks
+    ))
+}
+
 fn main() {
     let config = Config::load();
 
@@ -86,12 +109,38 @@ fn main() {
         eprintln!("Warning: No ANTHROPIC_API_KEY set. Set it in config or environment.");
     }
 
+    let vault_path = config.vault_path_expanded();
+    let vault = Arc::new(VaultIndex::new(vault_path));
+
+    // Background index on startup
+    let vault_clone = vault.clone();
+    std::thread::spawn(move || {
+        let stats = vault_clone.index(false);
+        eprintln!(
+            "Vault indexed: {} files, {} chunks",
+            stats.indexed + stats.skipped,
+            stats.total_chunks
+        );
+    });
+
     let brain = Brain::new(config.clone());
 
     let state = AppState {
         brain: Arc::new(Mutex::new(brain)),
         config: Arc::new(Mutex::new(config)),
+        vault: vault.clone(),
     };
+
+    // Set vault reference on brain (after state is created)
+    let brain_ref = state.brain.clone();
+    let vault_ref = vault.clone();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            brain_ref.lock().await.set_vault(vault_ref);
+        });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -102,6 +151,8 @@ fn main() {
             clear_history,
             get_config,
             save_config,
+            search_vault,
+            reindex_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

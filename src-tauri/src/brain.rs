@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::config::Config;
 use crate::tools::{parse_tool_calls, ToolRegistry};
+use crate::vault::VaultIndex;
 
 const SYSTEM_PROMPT: &str = "You are JARVIS, an autonomous AI agent. Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
 
@@ -22,6 +23,7 @@ pub struct Brain {
     history: Vec<Message>,
     config: Config,
     tools: ToolRegistry,
+    vault: Option<std::sync::Arc<VaultIndex>>,
 }
 
 impl Brain {
@@ -30,8 +32,13 @@ impl Brain {
             client: Client::new(),
             history: Vec::new(),
             tools: ToolRegistry::new(),
+            vault: None,
             config,
         }
+    }
+
+    pub fn set_vault(&mut self, vault: std::sync::Arc<VaultIndex>) {
+        self.vault = Some(vault);
     }
 
     pub async fn chat_stream(
@@ -277,6 +284,19 @@ impl Brain {
     fn build_system(&self) -> Value {
         let date = Local::now().format("%Y-%m-%d %H:%M").to_string();
 
+        // Get memory context from vault
+        let memory_ctx = self
+            .vault
+            .as_ref()
+            .map(|v| v.get_context())
+            .unwrap_or_default();
+
+        let mut dynamic_parts = Vec::new();
+        if !memory_ctx.is_empty() {
+            dynamic_parts.push(format!("Memory:\n{}", memory_ctx));
+        }
+        dynamic_parts.push(format!("Date: {}", date));
+
         // Static part (cacheable) + dynamic part
         json!([
             {
@@ -286,7 +306,7 @@ impl Brain {
             },
             {
                 "type": "text",
-                "text": format!("Date: {}", date)
+                "text": dynamic_parts.join("\n\n")
             }
         ])
     }
