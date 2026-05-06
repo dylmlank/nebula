@@ -155,19 +155,16 @@ fn main() {
         .setup(move |app| {
             let voice = VoiceEngine::new(voice_model, voice_speed, voice_enabled);
 
+            // Set vault on brain synchronously (no tokio needed)
+            let mut brain = brain;
+            brain.set_vault(vault.clone());
+
             let state = AppState {
                 brain: Arc::new(Mutex::new(brain)),
                 config: Arc::new(Mutex::new(config)),
                 vault: vault.clone(),
                 voice,
             };
-
-            // Set vault on brain
-            let brain_ref = state.brain.clone();
-            let vault_ref = vault.clone();
-            tokio::spawn(async move {
-                brain_ref.lock().await.set_vault(vault_ref);
-            });
 
             // Start file watcher for auto-reindex
             vault.start_watcher();
@@ -180,16 +177,11 @@ fn main() {
                 // Save session summary on exit
                 let state: tauri::State<AppState> = window.state();
                 let brain = state.brain.clone();
-                // Block briefly to save
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build();
-                if let Ok(rt) = rt {
-                    rt.block_on(async {
-                        let brain = brain.lock().await;
-                        brain.save_session_summary();
-                    });
-                }
+                std::thread::spawn(move || {
+                    // blocking_lock works from a sync context
+                    let brain = brain.blocking_lock();
+                    brain.save_session_summary();
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![

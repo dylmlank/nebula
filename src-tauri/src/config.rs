@@ -26,7 +26,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            api_key: String::new(),
+            api_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             base_url: "https://proxy.shift.aws.dev".into(),
             model: "us.anthropic.claude-sonnet-4-6".into(),
             fast_model: "anthropic.claude-haiku-4-5-20251001-v1:0".into(),
