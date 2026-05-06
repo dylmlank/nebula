@@ -185,6 +185,7 @@ function render() {
       <header class="topbar">
         <div class="topbar-title">JARVIS</div>
         <div class="topbar-actions">
+          <button class="btn-icon" id="btn-voice" title="Toggle voice">🔊</button>
           <button class="btn-icon" id="btn-clear" title="Clear history">Clear</button>
           <button class="btn-icon" id="btn-theme" title="Toggle theme">${theme === "dark" ? "☀️" : "🌙"}</button>
         </div>
@@ -240,6 +241,13 @@ function attachListeners() {
   input?.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  });
+
+  const voiceBtn = document.getElementById("btn-voice");
+
+  voiceBtn?.addEventListener("click", async () => {
+    const enabled = await invoke<boolean>("toggle_voice");
+    if (voiceBtn) voiceBtn.textContent = enabled ? "🔊" : "🔇";
   });
 
   clearBtn?.addEventListener("click", async () => {

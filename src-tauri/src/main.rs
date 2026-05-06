@@ -4,18 +4,21 @@ mod brain;
 mod config;
 mod tools;
 mod vault;
+mod voice;
 
 use brain::{Brain, StreamEvent};
 use config::Config;
 use vault::VaultIndex;
+use voice::VoiceEngine;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 
 struct AppState {
     brain: Arc<Mutex<Brain>>,
     config: Arc<Mutex<Config>>,
     vault: Arc<VaultIndex>,
+    voice: Arc<VoiceEngine>,
 }
 
 #[tauri::command]
@@ -25,14 +28,17 @@ async fn send_message(
     message: String,
 ) -> Result<String, String> {
     let brain = state.brain.clone();
+    let voice = state.voice.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
     // Spawn task to stream and emit events
     let app_handle = app.clone();
     tokio::spawn(async move {
+        let mut full_response = String::new();
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Token(token) => {
+                    full_response.push_str(&token);
                     let _ = app_handle.emit("chat-token", &token);
                 }
                 StreamEvent::ToolStart { name, args } => {
@@ -43,6 +49,8 @@ async fn send_message(
                 }
                 StreamEvent::Done(full) => {
                     let _ = app_handle.emit("chat-done", &full);
+                    // Speak the response (non-blocking)
+                    voice.speak(&full);
                 }
             }
         }
@@ -101,6 +109,16 @@ async fn reindex_vault(
     ))
 }
 
+#[tauri::command]
+async fn toggle_voice(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.voice.toggle())
+}
+
+#[tauri::command]
+async fn get_voice_status(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.voice.is_enabled())
+}
+
 fn main() {
     let config = Config::load();
 
@@ -125,27 +143,35 @@ fn main() {
 
     let brain = Brain::new(config.clone());
 
-    let state = AppState {
-        brain: Arc::new(Mutex::new(brain)),
-        config: Arc::new(Mutex::new(config)),
-        vault: vault.clone(),
-    };
-
-    // Set vault reference on brain (after state is created)
-    let brain_ref = state.brain.clone();
-    let vault_ref = vault.clone();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            brain_ref.lock().await.set_vault(vault_ref);
-        });
+    // Voice engine needs a tokio runtime for the background worker
+    // We'll initialize it inside the Tauri setup hook
+    let voice_model = shellexpand::tilde(&config.voice.model).to_string();
+    let voice_speed = config.voice.speed;
+    let voice_enabled = config.voice.enabled;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(state)
+        .setup(move |app| {
+            let voice = VoiceEngine::new(voice_model, voice_speed, voice_enabled);
+
+            let state = AppState {
+                brain: Arc::new(Mutex::new(brain)),
+                config: Arc::new(Mutex::new(config)),
+                vault: vault.clone(),
+                voice,
+            };
+
+            // Set vault on brain
+            let brain_ref = state.brain.clone();
+            let vault_ref = vault.clone();
+            tokio::spawn(async move {
+                brain_ref.lock().await.set_vault(vault_ref);
+            });
+
+            app.manage(state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             send_message,
             clear_history,
@@ -153,6 +179,8 @@ fn main() {
             save_config,
             search_vault,
             reindex_vault,
+            toggle_voice,
+            get_voice_status,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");
