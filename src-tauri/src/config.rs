@@ -1,0 +1,99 @@
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    pub enabled: bool,
+    pub model: String,
+    pub speed: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub api_key: String,
+    pub base_url: String,
+    pub model: String,
+    pub fast_model: String,
+    pub fallback_models: Vec<String>,
+    pub max_tokens: u32,
+    pub fast_max_tokens: u32,
+    pub vault_path: String,
+    pub voice: VoiceConfig,
+    pub theme: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: "https://proxy.shift.aws.dev".into(),
+            model: "us.anthropic.claude-sonnet-4-6".into(),
+            fast_model: "anthropic.claude-haiku-4-5-20251001-v1:0".into(),
+            fallback_models: vec![
+                "anthropic.claude-sonnet-4-6".into(),
+                "us.anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
+                "anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
+            ],
+            max_tokens: 4096,
+            fast_max_tokens: 2048,
+            vault_path: "~/Documents/vault/JARVIS".into(),
+            voice: VoiceConfig {
+                enabled: true,
+                model: "~/.local/share/piper-voices/en_GB-alan-medium.onnx".into(),
+                speed: 1.1,
+            },
+            theme: "dark".into(),
+        }
+    }
+}
+
+impl Config {
+    pub fn config_path() -> PathBuf {
+        let config_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("~/.config"))
+            .join("jarvis");
+        config_dir.join("config.json")
+    }
+
+    pub fn load() -> Self {
+        let path = Self::config_path();
+
+        let mut config = if path.exists() {
+            match fs::read_to_string(&path) {
+                Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+                Err(_) => Self::default(),
+            }
+        } else {
+            Self::default()
+        };
+
+        // Env var overrides
+        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+            config.api_key = key;
+        }
+        if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
+            config.base_url = url;
+        }
+        if let Ok(vault) = std::env::var("JARVIS_VAULT") {
+            config.vault_path = vault;
+        }
+
+        config
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        fs::write(&path, json).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn vault_path_expanded(&self) -> PathBuf {
+        let expanded = shellexpand::tilde(&self.vault_path);
+        PathBuf::from(expanded.as_ref())
+    }
+}

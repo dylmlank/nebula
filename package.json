@@ -1,0 +1,19 @@
+{
+  "name": "jarvis",
+  "version": "3.0.0",
+  "description": "JARVIS — Autonomous AI agent with voice, tools, and Obsidian brain",
+  "scripts": {
+    "dev": "bun run --bun vite",
+    "build": "bun run --bun vite build",
+    "tauri": "cargo tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "highlight.js": "^11"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "vite": "^6",
+    "typescript": "^5"
+  }
+}

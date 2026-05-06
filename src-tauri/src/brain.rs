@@ -1,0 +1,237 @@
+use chrono::Local;
+use futures::StreamExt;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+
+use crate::config::Config;
+
+const SYSTEM_PROMPT: &str = "You are JARVIS, an autonomous AI agent. Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+pub struct Brain {
+    client: Client,
+    history: Vec<Message>,
+    config: Config,
+}
+
+impl Brain {
+    pub fn new(config: Config) -> Self {
+        Self {
+            client: Client::new(),
+            history: Vec::new(),
+            config,
+        }
+    }
+
+    pub async fn chat_stream(
+        &mut self,
+        text: &str,
+        tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> String {
+        self.history.push(Message {
+            role: "user".into(),
+            content: text.into(),
+        });
+
+        let system = self.build_system();
+        let messages = self.build_messages();
+        let model = self.config.model.clone();
+
+        let response = self
+            .stream_api(&system, &messages, &model, self.config.max_tokens, &tx)
+            .await;
+
+        self.history.push(Message {
+            role: "assistant".into(),
+            content: response.clone(),
+        });
+
+        let _ = tx.send(StreamEvent::Done(response.clone()));
+        response
+    }
+
+    async fn stream_api(
+        &self,
+        system: &Value,
+        messages: &[Value],
+        model: &str,
+        max_tokens: u32,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> String {
+        let models_to_try: Vec<String> = std::iter::once(model.to_string())
+            .chain(self.config.fallback_models.iter().cloned())
+            .collect();
+
+        for m in &models_to_try {
+            match self.try_stream(system, messages, m, max_tokens, tx).await {
+                Ok(response) => return response,
+                Err(e) => {
+                    eprintln!("Model {} failed: {}", m, e);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+            }
+        }
+
+        let msg = "[All models unavailable — try again]".to_string();
+        let _ = tx.send(StreamEvent::Token(msg.clone()));
+        msg
+    }
+
+    async fn try_stream(
+        &self,
+        system: &Value,
+        messages: &[Value],
+        model: &str,
+        max_tokens: u32,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<String, String> {
+        let body = json!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+            "stream": true,
+        });
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        let status = response.status();
+        if status.as_u16() == 429 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            return Err("Rate limited".into());
+        }
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("HTTP {}: {}", status, &body[..200.min(body.len())]));
+        }
+
+        // Parse SSE stream
+        let mut full_response = String::new();
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            // Process complete SSE lines
+            while let Some(line_end) = buffer.find('\n') {
+                let line = buffer[..line_end].trim_end().to_string();
+                buffer = buffer[line_end + 1..].to_string();
+
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" {
+                        break;
+                    }
+
+                    if let Ok(event) = serde_json::from_str::<Value>(data) {
+                        // Extract text from content_block_delta events
+                        if event.get("type").and_then(|t| t.as_str())
+                            == Some("content_block_delta")
+                        {
+                            if let Some(text) = event
+                                .get("delta")
+                                .and_then(|d| d.get("text"))
+                                .and_then(|t| t.as_str())
+                            {
+                                full_response.push_str(text);
+                                let _ = tx.send(StreamEvent::Token(text.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if full_response.is_empty() {
+            return Err("Empty response".into());
+        }
+
+        Ok(full_response)
+    }
+
+    fn build_system(&self) -> Value {
+        let date = Local::now().format("%Y-%m-%d %H:%M").to_string();
+
+        // Static part (cacheable) + dynamic part
+        json!([
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"}
+            },
+            {
+                "type": "text",
+                "text": format!("Date: {}", date)
+            }
+        ])
+    }
+
+    fn build_messages(&self) -> Vec<Value> {
+        let window: Vec<&Message> = self.history.iter().rev().take(20).collect::<Vec<_>>();
+        let window: Vec<&Message> = window.into_iter().rev().collect();
+
+        let mut messages: Vec<Value> = Vec::new();
+
+        for msg in window {
+            let role = &msg.role;
+            let content = &msg.content;
+
+            if let Some(last) = messages.last_mut() {
+                if last.get("role").and_then(|r| r.as_str()) == Some(role) {
+                    // Merge consecutive same-role messages
+                    let existing = last.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    *last = json!({
+                        "role": role,
+                        "content": format!("{}\n\n{}", existing, content)
+                    });
+                    continue;
+                }
+            }
+
+            messages.push(json!({
+                "role": role,
+                "content": content
+            }));
+        }
+
+        // Ensure first message is from user
+        if messages.first().and_then(|m| m.get("role")).and_then(|r| r.as_str()) != Some("user") {
+            messages.remove(0);
+        }
+
+        messages
+    }
+
+    pub fn clear(&mut self) {
+        self.history.clear();
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Token(String),
+    ToolStart { name: String, args: String },
+    ToolResult { name: String, result: String },
+    Done(String),
+}
