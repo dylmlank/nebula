@@ -169,8 +169,28 @@ fn main() {
                 brain_ref.lock().await.set_vault(vault_ref);
             });
 
+            // Start file watcher for auto-reindex
+            vault.start_watcher();
+
             app.manage(state);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // Save session summary on exit
+                let state: tauri::State<AppState> = window.state();
+                let brain = state.brain.clone();
+                // Block briefly to save
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                if let Ok(rt) = rt {
+                    rt.block_on(async {
+                        let brain = brain.lock().await;
+                        brain.save_session_summary();
+                    });
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             send_message,

@@ -64,6 +64,9 @@ impl Brain {
             content: response.clone(),
         });
 
+        // Log interaction to daily file
+        self.log_interaction(text, &response);
+
         // Handle tool calls
         self.handle_tools(&response, &tx, 0).await;
 
@@ -349,6 +352,73 @@ impl Brain {
 
     pub fn clear(&mut self) {
         self.history.clear();
+    }
+
+    /// Log an interaction to today's log file
+    fn log_interaction(&self, user_msg: &str, assistant_msg: &str) {
+        let vault_path = self.config.vault_path_expanded();
+        let logs_dir = vault_path.join("logs");
+        let _ = std::fs::create_dir_all(&logs_dir);
+
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let timestamp = Local::now().format("%H:%M").to_string();
+        let log_file = logs_dir.join(format!("{}.md", today));
+
+        let entry = format!(
+            "\n---\n{}\nUser: {}\nJARVIS: {}\n",
+            timestamp,
+            &user_msg[..user_msg.len().min(300)],
+            &assistant_msg[..assistant_msg.len().min(800)],
+        );
+
+        let content = if log_file.exists() {
+            std::fs::read_to_string(&log_file).unwrap_or_default() + &entry
+        } else {
+            format!("---\ntags: [log, {}]\ndate: {}\n---\n\nLog for {}\n{}", today, today, today, entry)
+        };
+
+        let _ = std::fs::write(&log_file, content);
+    }
+
+    /// Generate a session summary and save it to the vault
+    pub fn save_session_summary(&self) {
+        if self.history.len() < 4 {
+            return; // Not enough conversation to summarize
+        }
+
+        let vault_path = self.config.vault_path_expanded();
+        let summaries_dir = vault_path.join("summaries");
+        let _ = std::fs::create_dir_all(&summaries_dir);
+
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let timestamp = Local::now().format("%H%M").to_string();
+        let summary_file = summaries_dir.join(format!("{}-session-{}.md", today, timestamp));
+
+        // Build a condensed version of the conversation
+        let mut topics: Vec<String> = Vec::new();
+
+        for msg in &self.history {
+            if msg.role == "user" {
+                let content = &msg.content;
+                // Skip very short messages and tool results
+                if content.len() > 10 && !content.starts_with('[') {
+                    topics.push(format!("- {}", &content[..content.len().min(100)]));
+                }
+            }
+        }
+
+        topics.truncate(10);
+
+        let summary_content = format!(
+            "---\ntags: [summary, session]\ndate: {}\n---\n\nSession Summary {}\n\nTopics discussed:\n{}\n\nMessages: {}\n",
+            today,
+            Local::now().format("%Y-%m-%d %H:%M"),
+            topics.join("\n"),
+            self.history.len(),
+        );
+
+        let _ = std::fs::write(&summary_file, summary_content);
+        eprintln!("Session summary saved: {}", summary_file.display());
     }
 }
 

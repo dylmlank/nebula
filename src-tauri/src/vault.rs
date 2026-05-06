@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use walkdir::WalkDir;
 
 /// A vault search result
@@ -348,6 +349,67 @@ impl VaultIndex {
         if let Ok(json) = serde_json::to_string(state) {
             let _ = fs::write(&self.state_file, json);
         }
+    }
+
+    /// Start watching the vault for file changes and auto-reindex
+    pub fn start_watcher(self: &Arc<Self>) {
+        let vault_path = self.vault_path.clone();
+        let index = self.clone();
+
+        std::thread::spawn(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+
+            let mut watcher = match RecommendedWatcher::new(
+                move |res: Result<Event, notify::Error>| {
+                    if let Ok(event) = res {
+                        let _ = tx.send(event);
+                    }
+                },
+                notify::Config::default(),
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("File watcher failed: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = watcher.watch(&vault_path, RecursiveMode::Recursive) {
+                eprintln!("Watch failed: {}", e);
+                return;
+            }
+
+            eprintln!("Vault watcher active: {}", vault_path.display());
+
+            // Debounce: collect events for 2 seconds then reindex
+            let mut last_reindex = std::time::Instant::now();
+
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                    Ok(event) => {
+                        // Only care about file modifications/creates/deletes
+                        match event.kind {
+                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
+                                // Check if it's a .md file
+                                let is_md = event.paths.iter().any(|p| {
+                                    p.extension().map(|e| e == "md").unwrap_or(false)
+                                });
+                                if is_md && last_reindex.elapsed() > std::time::Duration::from_secs(3) {
+                                    let stats = index.index(false);
+                                    if stats.indexed > 0 {
+                                        eprintln!("Auto-reindex: {} files updated, {} chunks", stats.indexed, stats.total_chunks);
+                                    }
+                                    last_reindex = std::time::Instant::now();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
     }
 }
 
