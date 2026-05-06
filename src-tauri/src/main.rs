@@ -27,6 +27,7 @@ async fn send_message(
     app: AppHandle,
     message: String,
 ) -> Result<String, String> {
+    eprintln!("[cmd] send_message: {:?}", &message[..message.len().min(50)]);
     let brain = state.brain.clone();
     let voice = state.voice.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
@@ -119,6 +120,11 @@ async fn get_voice_status(state: tauri::State<'_, AppState>) -> Result<bool, Str
     Ok(state.voice.is_enabled())
 }
 
+#[tauri::command]
+async fn ping() -> Result<String, String> {
+    Ok("pong".into())
+}
+
 fn main() {
     let config = Config::load();
 
@@ -193,6 +199,7 @@ fn main() {
             reindex_vault,
             toggle_voice,
             get_voice_status,
+            ping,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

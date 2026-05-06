@@ -216,6 +216,7 @@ impl Brain {
         });
 
         let url = format!("{}/v1/messages", self.config.base_url);
+        eprintln!("[brain] POST {} model={}", url, model);
 
         let response = self
             .client
@@ -229,6 +230,7 @@ impl Brain {
             .map_err(|e| format!("Request failed: {}", e))?;
 
         let status = response.status();
+        eprintln!("[brain] Response status: {}", status);
         if status.as_u16() == 429 {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             return Err("Rate limited".into());
@@ -276,6 +278,8 @@ impl Brain {
                 }
             }
         }
+
+        eprintln!("[brain] Stream complete, {} chars", full_response.len());
 
         if full_response.is_empty() {
             return Err("Empty response".into());

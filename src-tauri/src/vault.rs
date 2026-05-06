@@ -55,29 +55,9 @@ impl VaultIndex {
         let mut stats = IndexStats::default();
         let mut new_chunks = Vec::new();
 
-        // Keep existing chunks for unchanged files
-        if !force {
-            if let Ok(existing) = self.chunks.read() {
-                for chunk in existing.iter() {
-                    // Check if this file is still current
-                    if let Some(&saved_mtime) = state.files.get(&chunk.path) {
-                        let file_path = self.vault_path.join(&chunk.path);
-                        if let Ok(meta) = fs::metadata(&file_path) {
-                            let current_mtime = meta
-                                .modified()
-                                .unwrap_or(SystemTime::UNIX_EPOCH)
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                            if current_mtime == saved_mtime {
-                                // File unchanged — keep its chunks
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // On cold start, chunks are empty — must do full index
+        let chunks_empty = self.chunks.read().map(|c| c.is_empty()).unwrap_or(true);
+        let effective_force = force || chunks_empty;
 
         // Walk vault and process files
         let mut files_seen: HashMap<String, u64> = HashMap::new();
@@ -120,8 +100,8 @@ impl VaultIndex {
 
             files_seen.insert(rel_path.clone(), mtime);
 
-            // Skip unchanged files
-            if !force {
+            // Skip unchanged files (only if we have chunks in memory)
+            if !effective_force {
                 if let Some(&saved_mtime) = state.files.get(&rel_path) {
                     if saved_mtime == mtime {
                         // Keep existing chunks for this file
