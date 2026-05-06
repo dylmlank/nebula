@@ -311,6 +311,48 @@ html, body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Tool execution */
+.tool-area {
+  margin-bottom: 8px;
+}
+
+.tool-exec {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.tool-header {
+  color: var(--muted);
+}
+
+.tool-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tool-result {
+  margin-top: 4px;
+  color: var(--text);
+  opacity: 0.8;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-spinner {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* highlight.js theme overrides */
 .hljs {
   color: var(--text);

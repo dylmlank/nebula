@@ -7,12 +7,22 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  tools?: ToolExec[];
+}
+
+interface ToolExec {
+  name: string;
+  args: string;
+  result?: string;
+  status: "running" | "done";
 }
 
 // ── State ──
 let messages: Message[] = [];
 let isStreaming = false;
 let streamBuffer = "";
+let activeTool: ToolExec | null = null;
+let toolHistory: ToolExec[] = [];
 let theme: "dark" | "light" = (localStorage.getItem("jarvis-theme") as "dark" | "light") || "dark";
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -23,13 +33,30 @@ listen<string>("chat-token", (event) => {
   updateStreamingBubble();
 });
 
+listen<{name: string, args: string}>("tool-start", (event) => {
+  activeTool = { name: event.payload.name, args: event.payload.args, status: "running" };
+  toolHistory.push(activeTool);
+  updateToolDisplay();
+});
+
+listen<{name: string, result: string}>("tool-result", (event) => {
+  if (activeTool) {
+    activeTool.result = event.payload.result;
+    activeTool.status = "done";
+    activeTool = null;
+  }
+  updateToolDisplay();
+});
+
 listen<string>("chat-done", (_event) => {
   // Finalize the streaming message
   if (streamBuffer) {
-    messages.push({ id: uid(), role: "assistant", content: streamBuffer });
+    messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] });
   }
   streamBuffer = "";
   isStreaming = false;
+  activeTool = null;
+  toolHistory = [];
   render();
 });
 
@@ -91,12 +118,40 @@ function updateStreamingBubble() {
     bubble = document.createElement("div");
     bubble.id = "streaming-bubble";
     bubble.className = "message assistant";
-    bubble.innerHTML = '<div class="message-role">JARVIS</div><div class="message-body"></div>';
+    bubble.innerHTML = '<div class="message-role">JARVIS</div><div class="tool-area"></div><div class="message-body"></div>';
     chatArea.appendChild(bubble);
   }
 
   const body = bubble.querySelector(".message-body");
   if (body) body.innerHTML = md(streamBuffer);
+
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function updateToolDisplay() {
+  const chatArea = document.getElementById("chat-area");
+  if (!chatArea) return;
+
+  let bubble = document.getElementById("streaming-bubble");
+  if (!bubble) {
+    bubble = document.createElement("div");
+    bubble.id = "streaming-bubble";
+    bubble.className = "message assistant";
+    bubble.innerHTML = '<div class="message-role">JARVIS</div><div class="tool-area"></div><div class="message-body"></div>';
+    chatArea.appendChild(bubble);
+  }
+
+  const toolArea = bubble.querySelector(".tool-area");
+  if (toolArea) {
+    toolArea.innerHTML = toolHistory.map(t => {
+      const statusIcon = t.status === "running" ? '<span class="tool-spinner">⚙️</span>' : '✓';
+      const result = t.result ? `<div class="tool-result">${t.result.replace(/</g, "&lt;").slice(0, 150)}</div>` : '';
+      return `<div class="tool-exec">
+        <div class="tool-header">${statusIcon} <span class="tool-name">${t.name}</span>(${t.args.replace(/</g, "&lt;")})</div>
+        ${result}
+      </div>`;
+    }).join("");
+  }
 
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -111,8 +166,12 @@ function render() {
     const body = m.role === "user"
       ? m.content.replace(/</g, "&lt;").replace(/\n/g, "<br>")
       : md(m.content);
+    const toolsHtml = m.tools?.length
+      ? `<div class="tool-area">${m.tools.map(t => `<div class="tool-exec"><div class="tool-header">✓ <span class="tool-name">${t.name}</span>(${t.args.replace(/</g, "&lt;")})</div>${t.result ? `<div class="tool-result">${t.result.replace(/</g, "&lt;").slice(0, 150)}</div>` : ""}</div>`).join("")}</div>`
+      : "";
     return `<div class="message ${cls}">
       <div class="message-role">${label}</div>
+      ${toolsHtml}
       <div class="message-body">${body}</div>
     </div>`;
   }).join("");

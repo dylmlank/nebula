@@ -1,11 +1,13 @@
 use chrono::Local;
 use futures::StreamExt;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use crate::config::Config;
+use crate::tools::{parse_tool_calls, ToolRegistry};
 
 const SYSTEM_PROMPT: &str = "You are JARVIS, an autonomous AI agent. Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
 
@@ -19,6 +21,7 @@ pub struct Brain {
     client: Client,
     history: Vec<Message>,
     config: Config,
+    tools: ToolRegistry,
 }
 
 impl Brain {
@@ -26,6 +29,7 @@ impl Brain {
         Self {
             client: Client::new(),
             history: Vec::new(),
+            tools: ToolRegistry::new(),
             config,
         }
     }
@@ -53,8 +57,108 @@ impl Brain {
             content: response.clone(),
         });
 
+        // Handle tool calls
+        self.handle_tools(&response, &tx, 0).await;
+
         let _ = tx.send(StreamEvent::Done(response.clone()));
         response
+    }
+
+    async fn handle_tools(
+        &mut self,
+        response: &str,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+        depth: usize,
+    ) {
+        if depth > 7 {
+            return;
+        }
+
+        // Check for tool creation
+        let create_re = Regex::new(r"(?s)\[CREATE_TOOL:(\w+)\](.*?)\[/CREATE_TOOL\]").unwrap();
+        let mut created = Vec::new();
+        for cap in create_re.captures_iter(response) {
+            let name = cap[1].trim().to_string();
+            let code = cap[2].trim().to_string();
+            if !name.is_empty() && !code.is_empty() {
+                let result = self.tools.create_tool(&name, &code);
+                let _ = tx.send(StreamEvent::ToolResult {
+                    name: format!("create:{}", name),
+                    result: result.clone(),
+                });
+                created.push(name);
+            }
+        }
+
+        // Check for tool calls
+        let calls = parse_tool_calls(response);
+        if calls.is_empty() && created.is_empty() {
+            return;
+        }
+
+        let mut all_results = Vec::new();
+
+        for (name, args) in &calls {
+            let args_display: String = args
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, &v[..v.len().min(40)]))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let _ = tx.send(StreamEvent::ToolStart {
+                name: name.clone(),
+                args: args_display,
+            });
+
+            let result = self.tools.execute(name, args);
+            let short = if result.len() > 200 {
+                format!("{}...", &result[..200])
+            } else {
+                result.clone()
+            };
+
+            let _ = tx.send(StreamEvent::ToolResult {
+                name: name.clone(),
+                result: short,
+            });
+
+            all_results.push(format!("[{}]: {}", name, &result[..result.len().min(500)]));
+        }
+
+        if all_results.is_empty() && created.is_empty() {
+            return;
+        }
+
+        // Build feedback
+        let feedback = if !all_results.is_empty() {
+            all_results.join("\n")
+        } else {
+            format!("Tool '{}' created. Use it now if needed.", created[0])
+        };
+
+        self.history.push(Message {
+            role: "user".into(),
+            content: feedback,
+        });
+
+        // Use fast model for tool followups
+        let system = self.build_system();
+        let messages = self.build_messages();
+        let fast_model = self.config.fast_model.clone();
+
+        let _ = tx.send(StreamEvent::Token("\n".into()));
+
+        let followup = self
+            .stream_api(&system, &messages, &fast_model, self.config.fast_max_tokens, &tx)
+            .await;
+
+        self.history.push(Message {
+            role: "assistant".into(),
+            content: followup.clone(),
+        });
+
+        // Recurse for chained calls
+        Box::pin(self.handle_tools(&followup, tx, depth + 1)).await;
     }
 
     async fn stream_api(

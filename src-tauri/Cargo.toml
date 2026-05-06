@@ -20,6 +20,7 @@ shellexpand = "3"
 chrono = "0.4"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
 
 [profile.release]
 strip = true

@@ -2,6 +2,7 @@
 
 mod brain;
 mod config;
+mod tools;
 
 use brain::{Brain, StreamEvent};
 use config::Config;
