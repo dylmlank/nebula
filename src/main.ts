@@ -184,11 +184,11 @@ function renderChat(): string {
 function renderInput(): string {
   return `<footer class="input-footer">
     <div class="quick-actions">
-      <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">📋</button>
-      <button class="qa-btn" data-qa="sysinfo" title="System info">🖥️</button>
-      <button class="qa-btn" data-qa="note" title="Quick note">📝</button>
-      <button class="qa-btn" data-qa="search" title="Search vault">🔍</button>
-      <button class="qa-btn" data-qa="calendar" title="Calendar">📅</button>
+      <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">Clipboard</button>
+      <button class="qa-btn" data-qa="sysinfo" title="System info">System</button>
+      <button class="qa-btn" data-qa="note" title="Quick note">Note</button>
+      <button class="qa-btn" data-qa="search" title="Search vault">Vault</button>
+      <button class="qa-btn" data-qa="calendar" title="Calendar">Calendar</button>
     </div>
     <div class="input-bar">
       <textarea id="chat-input" placeholder="Message JARVIS..." ${isStreaming ? "disabled" : ""}></textarea>

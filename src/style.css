@@ -261,12 +261,13 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  font-size: 13px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
   cursor: pointer;
   transition: all var(--transition);
 }
-.qa-btn:hover { background: var(--accent-glow); border-color: var(--accent); transform: translateY(-1px); }
+.qa-btn:hover { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
 
 .input-bar { display: flex; gap: 8px; align-items: flex-end; }
 #chat-input {
