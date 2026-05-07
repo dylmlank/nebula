@@ -1171,6 +1171,386 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
     }
 }
 
+// ─── Network & System Admin Tools ───
+
+pub fn sudo_command(args: &HashMap<String, String>) -> String {
+    let command = args.get("command").or_else(|| args.get("cmd")).cloned().unwrap_or_default();
+    if command.is_empty() {
+        return "Error: no command".into();
+    }
+
+    // Run with sudo (requires NOPASSWD in sudoers or cached credentials)
+    match Command::new("sudo")
+        .args(["-n", "sh", "-c", &command])
+        .output()
+    {
+        Ok(output) => {
+            let mut out = String::from_utf8_lossy(&output.stdout).to_string();
+            let err = String::from_utf8_lossy(&output.stderr);
+            if !err.is_empty() {
+                if err.contains("password is required") {
+                    return "Error: sudo requires password. Add NOPASSWD for this user or run 'sudo -v' first.".into();
+                }
+                out.push('\n');
+                out.push_str(&err);
+            }
+            if !output.status.success() {
+                out.push_str(&format!("\n(exit {})", output.status.code().unwrap_or(-1)));
+            }
+            let out = out.trim().to_string();
+            if out.is_empty() { "(ok)".into() } else { out[..out.len().min(3000)].to_string() }
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+pub fn network_scan(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "interfaces".into());
+    let target = args.get("target").cloned().unwrap_or_default();
+
+    match action.as_str() {
+        "interfaces" => {
+            // List network interfaces and IPs
+            match Command::new("ip").args(["addr", "show"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    // Parse to something readable
+                    let mut results = Vec::new();
+                    let mut current_iface = String::new();
+                    for line in out.lines() {
+                        if !line.starts_with(' ') && line.contains(':') {
+                            let parts: Vec<&str> = line.split(':').collect();
+                            if parts.len() >= 2 {
+                                current_iface = parts[1].trim().to_string();
+                            }
+                        }
+                        if line.contains("inet ") && !line.contains("inet6") {
+                            let ip = line.trim().split_whitespace().nth(1).unwrap_or("?");
+                            results.push(format!("  {} — {}", current_iface, ip));
+                        }
+                    }
+                    if results.is_empty() { "No interfaces found".into() }
+                    else { format!("Network interfaces:\n{}", results.join("\n")) }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "scan" | "discover" => {
+            // Scan local network for hosts
+            let subnet = if target.is_empty() {
+                // Auto-detect subnet
+                let output = Command::new("ip").args(["route", "show", "default"]).output();
+                match output {
+                    Ok(o) => {
+                        let out = String::from_utf8_lossy(&o.stdout);
+                        // Extract gateway and guess subnet
+                        let gw = out.split_whitespace().nth(2).unwrap_or("192.168.1.1");
+                        let parts: Vec<&str> = gw.rsplitn(2, '.').collect();
+                        format!("{}.0/24", parts.last().unwrap_or(&"192.168.1"))
+                    }
+                    Err(_) => "192.168.1.0/24".into(),
+                }
+            } else {
+                target.clone()
+            };
+
+            // Use nmap if available, fallback to arp-scan or ping sweep
+            let result = Command::new("nmap").args(["-sn", "-T4", &subnet]).output();
+            match result {
+                Ok(output) if output.status.success() => {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    let hosts: Vec<&str> = out.lines()
+                        .filter(|l| l.contains("Nmap scan report") || l.contains("MAC Address"))
+                        .collect();
+                    if hosts.is_empty() { format!("No hosts found on {}", subnet) }
+                    else { format!("Hosts on {}:\n{}", subnet, hosts.join("\n")[..hosts.join("\n").len().min(2000)].to_string()) }
+                }
+                _ => {
+                    // Fallback: arp-scan
+                    match Command::new("sudo").args(["-n", "arp-scan", "--localnet"]).output() {
+                        Ok(output) => {
+                            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if out.is_empty() { "Install nmap or arp-scan for network scanning".into() }
+                            else { out[..out.len().min(2000)].to_string() }
+                        }
+                        Err(_) => "Install nmap: sudo apt install nmap".into(),
+                    }
+                }
+            }
+        }
+        "ports" => {
+            // Port scan a target
+            if target.is_empty() {
+                return "Error: need target (IP or hostname)".into();
+            }
+            let ports = args.get("ports").cloned().unwrap_or_else(|| "1-1024".into());
+            match Command::new("nmap").args(["-p", &ports, "-T4", &target]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No results (is nmap installed?)".into() }
+                    else { out[..out.len().min(2000)].to_string() }
+                }
+                Err(_) => {
+                    // Fallback: use /dev/tcp bash trick for common ports
+                    let common_ports = [22, 80, 443, 8080, 3000, 5000, 8000, 3306, 5432, 6379];
+                    let mut open = Vec::new();
+                    for port in common_ports {
+                        let check = Command::new("sh")
+                            .arg("-c")
+                            .arg(format!("timeout 1 bash -c 'echo >/dev/tcp/{}/{}' 2>/dev/null && echo open", target, port))
+                            .output();
+                        if let Ok(o) = check {
+                            if String::from_utf8_lossy(&o.stdout).contains("open") {
+                                open.push(format!("  {} — open", port));
+                            }
+                        }
+                    }
+                    if open.is_empty() { format!("No open ports found on {} (common ports only)", target) }
+                    else { format!("Open ports on {}:\n{}", target, open.join("\n")) }
+                }
+            }
+        }
+        "wifi" => {
+            // List available WiFi networks
+            match Command::new("nmcli").args(["dev", "wifi", "list"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No WiFi networks found".into() }
+                    else { out[..out.len().min(2000)].to_string() }
+                }
+                Err(_) => "nmcli not available".into(),
+            }
+        }
+        "connections" => {
+            // Show active connections
+            match Command::new("ss").args(["-tuln"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    out[..out.len().min(2000)].to_string()
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "bandwidth" => {
+            // Quick bandwidth check using /proc/net/dev
+            match Command::new("sh")
+                .arg("-c")
+                .arg("cat /proc/net/dev | grep -v 'lo:' | tail -n +3 | awk '{print $1, \"RX:\" $2/1024/1024 \"MB TX:\" $10/1024/1024 \"MB\"}'")
+                .output()
+            {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No network stats".into() } else { format!("Network usage:\n{}", out) }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        _ => "Actions: interfaces, scan, ports (target=IP), wifi, connections, bandwidth".into(),
+    }
+}
+
+pub fn bluetooth(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "list".into());
+    let device = args.get("device").cloned().unwrap_or_default();
+
+    match action.as_str() {
+        "list" | "paired" => {
+            match Command::new("bluetoothctl").args(["devices"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No paired Bluetooth devices".into() }
+                    else { format!("Paired devices:\n{}", out) }
+                }
+                Err(_) => "bluetoothctl not available".into(),
+            }
+        }
+        "scan" => {
+            // Quick 5-second scan
+            match Command::new("sh")
+                .arg("-c")
+                .arg("timeout 5 bluetoothctl scan on 2>/dev/null & sleep 5; bluetoothctl devices")
+                .output()
+            {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No devices found".into() }
+                    else { format!("Discovered devices:\n{}", out) }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "connect" => {
+            if device.is_empty() { return "Error: need device (MAC address like AA:BB:CC:DD:EE:FF)".into(); }
+            match Command::new("bluetoothctl").args(["connect", &device]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    let err = String::from_utf8_lossy(&output.stderr);
+                    if out.contains("Connected") || out.contains("successful") {
+                        format!("Connected to {}", device)
+                    } else {
+                        format!("Failed: {}{}", out.trim(), err.trim())
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "disconnect" => {
+            if device.is_empty() { return "Error: need device MAC".into(); }
+            match Command::new("bluetoothctl").args(["disconnect", &device]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.contains("Successful") { format!("Disconnected {}", device) }
+                    else { format!("Result: {}", out) }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "info" => {
+            if device.is_empty() { return "Error: need device MAC".into(); }
+            match Command::new("bluetoothctl").args(["info", &device]).output() {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        _ => "Actions: list, scan, connect (device=MAC), disconnect (device=MAC), info (device=MAC)".into(),
+    }
+}
+
+pub fn service_manage(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "status".into());
+    let service = args.get("service").cloned().unwrap_or_default();
+
+    match action.as_str() {
+        "list" => {
+            match Command::new("systemctl").args(["list-units", "--type=service", "--state=running", "--no-pager"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    out[..out.len().min(2500)].to_string()
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "status" => {
+            if service.is_empty() { return "Error: need service name".into(); }
+            match Command::new("systemctl").args(["status", &service, "--no-pager"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    out[..out.len().min(1500)].to_string()
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "start" | "stop" | "restart" | "enable" | "disable" => {
+            if service.is_empty() { return "Error: need service name".into(); }
+            match Command::new("sudo").args(["-n", "systemctl", &action, &service]).output() {
+                Ok(output) => {
+                    if output.status.success() {
+                        format!("Service '{}' — {} done", service, action)
+                    } else {
+                        let err = String::from_utf8_lossy(&output.stderr);
+                        format!("Failed: {}", err.trim())
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "logs" => {
+            if service.is_empty() { return "Error: need service name".into(); }
+            let lines = args.get("lines").cloned().unwrap_or_else(|| "20".into());
+            match Command::new("journalctl").args(["-u", &service, "-n", &lines, "--no-pager"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    out[..out.len().min(2500)].to_string()
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        _ => "Actions: list, status (service=X), start/stop/restart/enable/disable (service=X), logs (service=X lines=N)".into(),
+    }
+}
+
+pub fn security_audit(args: &HashMap<String, String>) -> String {
+    let check = args.get("check").cloned().unwrap_or_else(|| "all".into());
+
+    let mut results = Vec::new();
+
+    if check == "all" || check == "ports" {
+        // Open ports
+        if let Ok(output) = Command::new("ss").args(["-tuln"]).output() {
+            let out = String::from_utf8_lossy(&output.stdout);
+            let listening: Vec<&str> = out.lines().filter(|l| l.contains("LISTEN")).collect();
+            results.push(format!("Open ports ({} listening):\n{}", listening.len(), listening.iter().take(10).cloned().collect::<Vec<_>>().join("\n")));
+        }
+    }
+
+    if check == "all" || check == "ssh" {
+        // SSH config check
+        if let Ok(content) = std::fs::read_to_string("/etc/ssh/sshd_config") {
+            let mut issues = Vec::new();
+            if content.contains("PermitRootLogin yes") { issues.push("  ⚠ Root login enabled"); }
+            if content.contains("PasswordAuthentication yes") { issues.push("  ⚠ Password auth enabled (prefer keys)"); }
+            if !content.contains("PermitRootLogin no") && !content.contains("PermitRootLogin prohibit-password") {
+                issues.push("  ⚠ Root login not explicitly disabled");
+            }
+            if issues.is_empty() { results.push("SSH: ✓ Looks secure".into()); }
+            else { results.push(format!("SSH issues:\n{}", issues.join("\n"))); }
+        }
+    }
+
+    if check == "all" || check == "firewall" {
+        // Firewall status
+        if let Ok(output) = Command::new("sudo").args(["-n", "ufw", "status"]).output() {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if out.contains("inactive") { results.push("Firewall: ⚠ UFW inactive".into()); }
+            else { results.push(format!("Firewall:\n{}", &out[..out.len().min(500)])); }
+        } else if let Ok(output) = Command::new("sudo").args(["-n", "iptables", "-L", "-n"]).output() {
+            let out = String::from_utf8_lossy(&output.stdout);
+            let rules = out.lines().count();
+            results.push(format!("Firewall: iptables ({} rules)", rules));
+        }
+    }
+
+    if check == "all" || check == "updates" {
+        // Pending updates
+        if let Ok(output) = Command::new("sh").arg("-c").arg("apt list --upgradable 2>/dev/null | wc -l").output() {
+            let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(0);
+            if count > 1 { results.push(format!("Updates: {} packages upgradable", count - 1)); }
+            else { results.push("Updates: ✓ System up to date".into()); }
+        }
+    }
+
+    if check == "all" || check == "users" {
+        // Users with shell access
+        if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+            let shell_users: Vec<&str> = content.lines()
+                .filter(|l| l.contains("/bin/bash") || l.contains("/bin/zsh") || l.contains("/bin/sh"))
+                .filter(|l| !l.starts_with('#'))
+                .filter_map(|l| l.split(':').next())
+                .collect();
+            results.push(format!("Users with shell access: {}", shell_users.join(", ")));
+        }
+    }
+
+    if check == "all" || check == "permissions" {
+        // World-writable files in common locations
+        if let Ok(output) = Command::new("find")
+            .args(["/home", "-maxdepth", "3", "-perm", "-o+w", "-type", "f"])
+            .output()
+        {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let count = out.lines().count();
+            if count > 0 {
+                results.push(format!("World-writable files: {} found in /home", count));
+            } else {
+                results.push("Permissions: ✓ No world-writable files in /home".into());
+            }
+        }
+    }
+
+    if results.is_empty() { "No security checks completed.".into() }
+    else { format!("Security Audit:\n\n{}", results.join("\n\n")) }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -1221,6 +1601,11 @@ impl ToolRegistry {
             "google_search" => google_search(args),
             "calendar" => calendar(args),
             "calendar_auth" => calendar_auth(args),
+            "sudo" => sudo_command(args),
+            "network" => network_scan(args),
+            "bluetooth" => bluetooth(args),
+            "service" => service_manage(args),
+            "security_audit" => security_audit(args),
             _ => self.run_custom_tool(name, args),
         }
     }
@@ -1229,12 +1614,12 @@ impl ToolRegistry {
         let script_path = self.custom_tools_dir.join(format!("{}.ts", name));
         if !script_path.exists() {
             return format!(
-                "Unknown tool '{}'. Available: run_command, read_file, write_file, list_files, \
+                "Unknown tool '{}'. Available: run_command, sudo, read_file, write_file, list_files, \
                  web_search, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, \
                  system_info, remember, knowledge_search, knowledge_save, save_decision, save_idea, \
                  save_learning, save_person, recall, daily_summary, pip_install, git, \
                  multi_command, find_files, replace_in_file, processes, kill_process, set_context, \
-                 calendar, calendar_auth",
+                 calendar, calendar_auth, network, bluetooth, service, security_audit",
                 name
             );
         }
