@@ -62,13 +62,7 @@ def main():
     WAKE_WORDS = ["jarvis", "hey jarvis", "yo jarvis", "okay jarvis"]
 
     audio_queue = queue.Queue()
-    is_listening = False
-    wake_detected = False
     should_quit = False
-
-    def audio_callback(indata, frames, time_info, status):
-        """Called for each audio block from the microphone."""
-        audio_queue.put(indata.copy())
 
     def detect_wake_word(audio_data: np.ndarray) -> bool:
         """Check if audio contains the wake word using Whisper."""
@@ -115,83 +109,57 @@ def main():
 
     # Main loop
     try:
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
-                           blocksize=BLOCK_SIZE, callback=audio_callback):
-            speech_buffer = []
+        # Calibrate: measure 1s of ambient noise
+        emit("status", message="Calibrating...")
+        cal_audio = sd.rec(int(SAMPLE_RATE * 1), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+        sd.wait()
+        ambient_level = np.sqrt(np.mean(cal_audio ** 2))
+        speech_start = max(ambient_level * 3.0, 0.03)
+        silence_level = max(ambient_level * 1.5, 0.01)
+
+        emit("wake")  # Ready to listen
+
+        while not should_quit:
+            # Wait for speech — record 0.5s chunks and check level
+            chunk = sd.rec(int(SAMPLE_RATE * 0.5), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+            sd.wait()
+            rms = np.sqrt(np.mean(chunk ** 2))
+
+            if rms < speech_start:
+                continue  # Still silence, keep waiting
+
+            # Speech detected — record until silence
+            emit("listening")
+            speech_parts = [chunk]
             silence_counter = 0
-            is_speaking = False
 
-            # Calibrate: measure ambient noise for 1 second
-            emit("status", message="Calibrating microphone...")
-            ambient_samples = []
-            cal_start = time.time()
-            while time.time() - cal_start < 1.0:
-                try:
-                    data = audio_queue.get(timeout=0.2)
-                    ambient_samples.append(np.sqrt(np.mean(data ** 2)))
-                except queue.Empty:
-                    pass
+            while silence_counter < SILENCE_DURATION:
+                part = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+                sd.wait()
+                part_rms = np.sqrt(np.mean(part ** 2))
+                speech_parts.append(part)
 
-            if ambient_samples:
-                ambient_level = np.mean(ambient_samples)
-                # Speech must be 3x ambient, silence is 1.5x ambient
-                speech_start = max(ambient_level * 3.0, 0.03)
-                silence_level = ambient_level * 1.5
-            else:
-                speech_start = SPEECH_THRESHOLD
-                silence_level = SILENCE_THRESHOLD
-
-            emit("wake")  # Ready to listen
-
-            while not should_quit:
-                try:
-                    data = audio_queue.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-
-                rms = np.sqrt(np.mean(data ** 2))
-
-                if not is_speaking:
-                    # Waiting for user to start talking
-                    if rms >= speech_start:
-                        is_speaking = True
-                        speech_buffer = [data]
-                        silence_counter = 0
-                        emit("listening")
+                if part_rms < silence_level:
+                    silence_counter += 0.3
                 else:
-                    # Recording user speech
-                    speech_buffer.append(data)
+                    silence_counter = 0
 
-                    if rms < silence_level:
-                        silence_counter += len(data) / SAMPLE_RATE
-                    else:
-                        silence_counter = 0
+                # Max 30s
+                total_time = sum(len(p) for p in speech_parts) / SAMPLE_RATE
+                if total_time > 30:
+                    break
 
-                    # Stop after silence
-                    if silence_counter >= SILENCE_DURATION and len(speech_buffer) > 5:
-                        audio_data = np.concatenate(speech_buffer)
-                        text = transcribe_speech(audio_data)
+            # Transcribe
+            audio_data = np.concatenate(speech_parts)
+            text = transcribe_speech(audio_data)
 
-                        if text and len(text) > 1:
-                            emit("transcript", text=text)
-                        else:
-                            emit("wake")  # No speech detected, listen again
+            if text and len(text) > 1:
+                emit("transcript", text=text)
+            else:
+                emit("wake")
 
-                        # Reset for next utterance
-                        is_speaking = False
-                        speech_buffer = []
-                        silence_counter = 0
-
-                    # Timeout: max 30s recording
-                    total_speech_time = sum(len(b) for b in speech_buffer) / SAMPLE_RATE
-                    if total_speech_time > 30:
-                        audio_data = np.concatenate(speech_buffer)
-                        text = transcribe_speech(audio_data)
-                        if text:
-                            emit("transcript", text=text)
-                        is_speaking = False
-                        speech_buffer = []
-                        silence_counter = 0
+            # Ready for next utterance
+            emit("wake")
 
     except KeyboardInterrupt:
         pass
