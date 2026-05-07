@@ -28,7 +28,6 @@ async fn send_message(
     message: String,
 ) -> Result<String, String> {
     let brain = state.brain.clone();
-    let voice = state.voice.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
     // Spawn task to stream and emit events
@@ -49,8 +48,6 @@ async fn send_message(
                 }
                 StreamEvent::Done(full) => {
                     let _ = app_handle.emit("chat-done", &full);
-                    // Speak the response (non-blocking)
-                    voice.speak(&full);
                 }
             }
         }
@@ -185,6 +182,12 @@ async fn stop_voice_mode() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn speak_response(state: tauri::State<'_, AppState>, text: String) -> Result<(), String> {
+    state.voice.speak(&text);
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
@@ -314,6 +317,7 @@ fn main() {
             delete_conversation,
             start_voice_mode,
             stop_voice_mode,
+            speak_response,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

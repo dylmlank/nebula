@@ -23,6 +23,7 @@ let conversations: Conversation[] = [];
 let voiceModeActive = false;
 let voiceState: "idle" | "listening" | "wake" | "processing" = "idle";
 let voiceTranscript = "";
+let voiceInitiatedMessage = false; // tracks if current message was from voice
 let currentConvoId = "";
 let sidebarOpen = localStorage.getItem("jarvis-sidebar") !== "closed";
 
@@ -32,7 +33,21 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 listen<string>("chat-token", (e) => { streamBuffer += e.payload; updateStreamingBubble(); });
 listen<{name: string, args: string}>("tool-start", (e) => { activeTool = { name: e.payload.name, args: e.payload.args, status: "running" }; toolHistory.push(activeTool); updateToolDisplay(); });
 listen<{name: string, result: string}>("tool-result", (e) => { if (activeTool) { activeTool.result = e.payload.result; activeTool.status = "done"; activeTool = null; } updateToolDisplay(); });
-listen<string>("chat-done", () => { if (streamBuffer) { messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] }); } streamBuffer = ""; isStreaming = false; activeTool = null; toolHistory = []; saveCurrentConvo(); render(); });
+listen<string>("chat-done", () => {
+  if (streamBuffer) {
+    messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] });
+    // Speak response only if it was initiated from voice mode
+    if (voiceInitiatedMessage && voiceModeActive) {
+      invoke("toggle_voice").then(() => {
+        // Ensure TTS is on, speak, then turn off
+      });
+      // Just use the existing voice engine to speak this one response
+      invoke("speak_response", { text: streamBuffer }).catch(() => {});
+    }
+    voiceInitiatedMessage = false;
+  }
+  streamBuffer = ""; isStreaming = false; activeTool = null; toolHistory = []; saveCurrentConvo(); render();
+});
 
 // Voice mode events from Python sidecar
 listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) => {
@@ -43,6 +58,7 @@ listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) 
   else if (ev.type === "transcript" && ev.text) {
     voiceTranscript = ev.text;
     voiceState = "processing";
+    voiceInitiatedMessage = true;
     render();
     // Auto-send the transcript as a message
     sendMessage(ev.text);
@@ -179,7 +195,6 @@ function render() {
             </nav>
           </div>
           <div class="topbar-actions">
-            <button class="btn-icon" id="btn-voice">🔊</button>
             <button class="btn-icon" id="btn-theme">${theme === "dark" ? "☀️" : "🌙"}</button>
           </div>
         </header>
@@ -310,9 +325,8 @@ function attachListeners() {
     else if (qa === "calendar") sendMessage("What's on my calendar today?");
   }));
 
-  // Theme & voice
+  // Theme
   document.getElementById("btn-theme")?.addEventListener("click", () => { theme = theme === "dark" ? "light" : "dark"; localStorage.setItem("jarvis-theme", theme); applyTheme(); render(); });
-  document.getElementById("btn-voice")?.addEventListener("click", async () => { const on = await invoke<boolean>("toggle_voice"); const b = document.getElementById("btn-voice"); if (b) b.textContent = on ? "🔊" : "🔇"; });
 
   // Vault
   const vi = document.getElementById("vault-input") as HTMLInputElement;
