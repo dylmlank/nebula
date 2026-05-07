@@ -27,9 +27,8 @@ impl VoiceEngine {
             model_path
         };
 
-        // Convert speed to length_scale (inverse: higher speed = lower scale)
-        // speed 1.25 -> length_scale 0.8
-        let length_scale = format!("{:.2}", 1.0 / speed);
+        // length_scale: higher = slower/deeper. Config speed IS the length_scale.
+        let length_scale = format!("{:.2}", speed);
 
         let engine = Arc::new(Self {
             model_path: model.clone(),
