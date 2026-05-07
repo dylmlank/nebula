@@ -120,6 +120,71 @@ async fn get_voice_status(state: tauri::State<'_, AppState>) -> Result<bool, Str
 }
 
 #[tauri::command]
+async fn start_voice_mode(app: AppHandle) -> Result<String, String> {
+    // Find the sidecar script
+    let sidecar_path = std::env::current_exe()
+        .unwrap_or_default()
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("../../../sidecar/voice_sidecar.py");
+
+    // Fallback paths
+    let paths_to_try = [
+        sidecar_path.clone(),
+        dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/voice_sidecar.py"),
+    ];
+
+    let script_path = paths_to_try.iter()
+        .find(|p| p.exists())
+        .cloned()
+        .ok_or_else(|| "Voice sidecar not found".to_string())?;
+
+    let app_handle = app.clone();
+
+    // Spawn the Python sidecar
+    tokio::spawn(async move {
+        use tokio::process::Command as TokioCommand;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut child = match TokioCommand::new("python3")
+            .arg(&script_path)
+            .stdout(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = app_handle.emit("voice-mode-event", serde_json::json!({"type": "error", "message": format!("Failed to start: {}", e)}));
+                return;
+            }
+        };
+
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout).lines();
+
+        while let Ok(Some(line)) = reader.next_line().await {
+            if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
+                let _ = app_handle.emit("voice-mode-event", &event);
+            }
+        }
+
+        let _ = app_handle.emit("voice-mode-event", serde_json::json!({"type": "stopped"}));
+    });
+
+    Ok("Voice mode started".into())
+}
+
+#[tauri::command]
+async fn stop_voice_mode() -> Result<(), String> {
+    // Kill any running voice sidecar
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "voice_sidecar.py"])
+        .output();
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
@@ -247,6 +312,8 @@ fn main() {
             list_conversations,
             save_conversation,
             delete_conversation,
+            start_voice_mode,
+            stop_voice_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

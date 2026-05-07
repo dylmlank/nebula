@@ -16,10 +16,13 @@ let streamBuffer = "";
 let activeTool: ToolExec | null = null;
 let toolHistory: ToolExec[] = [];
 let theme: "dark" | "light" = (localStorage.getItem("jarvis-theme") as "dark" | "light") || "dark";
-let currentPanel: "chat" | "vault" | "settings" = "chat";
+let currentPanel: "chat" | "vault" | "settings" | "voice" = "chat";
 let vaultResults: VaultResult[] = [];
 let vaultQuery = "";
 let conversations: Conversation[] = [];
+let voiceModeActive = false;
+let voiceState: "idle" | "listening" | "wake" | "processing" = "idle";
+let voiceTranscript = "";
 let currentConvoId = "";
 let sidebarOpen = localStorage.getItem("jarvis-sidebar") !== "closed";
 
@@ -30,6 +33,28 @@ listen<string>("chat-token", (e) => { streamBuffer += e.payload; updateStreaming
 listen<{name: string, args: string}>("tool-start", (e) => { activeTool = { name: e.payload.name, args: e.payload.args, status: "running" }; toolHistory.push(activeTool); updateToolDisplay(); });
 listen<{name: string, result: string}>("tool-result", (e) => { if (activeTool) { activeTool.result = e.payload.result; activeTool.status = "done"; activeTool = null; } updateToolDisplay(); });
 listen<string>("chat-done", () => { if (streamBuffer) { messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] }); } streamBuffer = ""; isStreaming = false; activeTool = null; toolHistory = []; saveCurrentConvo(); render(); });
+
+// Voice mode events from Python sidecar
+listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) => {
+  const ev = e.payload;
+  if (ev.type === "ready") { voiceState = "idle"; voiceModeActive = true; render(); }
+  else if (ev.type === "wake") { voiceState = "wake"; render(); }
+  else if (ev.type === "listening") { voiceState = "listening"; render(); }
+  else if (ev.type === "transcript" && ev.text) {
+    voiceTranscript = ev.text;
+    voiceState = "processing";
+    render();
+    // Auto-send the transcript as a message
+    sendMessage(ev.text);
+    // Switch to chat to see the response
+    setTimeout(() => { currentPanel = "chat"; render(); }, 500);
+  }
+  else if (ev.type === "stopped") { voiceModeActive = false; voiceState = "idle"; render(); }
+  else if (ev.type === "error" && ev.message) {
+    voiceTranscript = `Error: ${ev.message}`;
+    render();
+  }
+});
 
 // ── API ──
 async function sendMessage(text: string) {
@@ -148,6 +173,7 @@ function render() {
             <div class="topbar-title">JARVIS</div>
             <nav class="topbar-nav">
               <button class="nav-tab ${currentPanel === "chat" ? "active" : ""}" data-panel="chat">Chat</button>
+              <button class="nav-tab ${currentPanel === "voice" ? "active" : ""}" data-panel="voice">Voice</button>
               <button class="nav-tab ${currentPanel === "vault" ? "active" : ""}" data-panel="vault">Vault</button>
               <button class="nav-tab ${currentPanel === "settings" ? "active" : ""}" data-panel="settings">Settings</button>
             </nav>
@@ -159,6 +185,7 @@ function render() {
         </header>
         <main class="content">
           ${currentPanel === "chat" ? renderChat() : ""}
+          ${currentPanel === "voice" ? renderVoiceMode() : ""}
           ${currentPanel === "vault" ? renderVault() : ""}
           ${currentPanel === "settings" ? renderSettings() : ""}
         </main>
@@ -195,6 +222,40 @@ function renderInput(): string {
       <button class="btn-send" id="btn-send" ${isStreaming ? "disabled" : ""}>↑</button>
     </div>
   </footer>`;
+}
+
+function renderVoiceMode(): string {
+  const stateText = {
+    idle: "Say \"Hey JARVIS\" to begin",
+    wake: "Listening...",
+    listening: "Recording your voice...",
+    processing: "Processing...",
+  }[voiceState] || "Idle";
+
+  const pulseClass = voiceState === "wake" || voiceState === "listening" ? "pulse-active" : "";
+  const orbClass = voiceModeActive ? "orb-active" : "";
+
+  return `<div class="voice-panel">
+    <div class="voice-orb-container">
+      <div class="voice-orb ${orbClass} ${pulseClass}">
+        <div class="voice-orb-inner"></div>
+        <div class="voice-orb-ring"></div>
+        <div class="voice-orb-ring ring-2"></div>
+      </div>
+    </div>
+    <div class="voice-status">${stateText}</div>
+    ${voiceTranscript ? `<div class="voice-transcript">"${voiceTranscript}"</div>` : ""}
+    <div class="voice-controls">
+      ${!voiceModeActive
+        ? `<button class="voice-btn start" id="btn-voice-start">Start Voice Mode</button>`
+        : `<button class="voice-btn stop" id="btn-voice-stop">Stop</button>`
+      }
+    </div>
+    <div class="voice-info">
+      <p>Wake words: "Hey JARVIS", "JARVIS", "Yo JARVIS"</p>
+      <p>Uses Whisper for speech recognition • Piper for TTS response</p>
+    </div>
+  </div>`;
 }
 
 function renderVault(): string {
@@ -266,6 +327,16 @@ function attachListeners() {
   // Focus
   if (currentPanel === "chat" && !isStreaming) input?.focus();
   if (currentPanel === "vault") vi?.focus();
+
+  // Voice mode
+  document.getElementById("btn-voice-start")?.addEventListener("click", async () => {
+    try { await invoke("start_voice_mode"); voiceModeActive = true; voiceState = "idle"; render(); }
+    catch (e) { voiceTranscript = `Error: ${e}`; render(); }
+  });
+  document.getElementById("btn-voice-stop")?.addEventListener("click", async () => {
+    try { await invoke("stop_voice_mode"); voiceModeActive = false; voiceState = "idle"; render(); }
+    catch (e) { voiceTranscript = `Error: ${e}`; render(); }
+  });
 
   // Shortcuts
   document.addEventListener("keydown", (e) => {
