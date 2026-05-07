@@ -110,8 +110,8 @@ def main():
     # Main loop
     try:
         # Fixed thresholds
-        speech_start = 0.03  # Start recording when RMS exceeds this (lowered to catch more speech)
-        silence_level = 0.015  # Stop recording when RMS drops below this
+        speech_start = 0.06  # Start recording — needs clear speech (filters background noise)
+        silence_level = 0.03  # Stop recording when RMS drops below this
 
         emit("wake")  # Ready to listen immediately
 
