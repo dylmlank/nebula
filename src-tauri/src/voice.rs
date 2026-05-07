@@ -8,6 +8,7 @@ use std::thread;
 pub struct VoiceEngine {
     voice: String,
     rate: String,
+    pitch: String,
     pub enabled: AtomicBool,
     tx: mpsc::Sender<String>,
 }
@@ -16,7 +17,7 @@ impl VoiceEngine {
     pub fn new(_model_path: String, speed: f32, enabled: bool) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<String>();
 
-        // Convert speed to edge-tts rate format (e.g. 1.1 -> "+10%", 0.9 -> "-10%")
+        // Convert speed to edge-tts rate format (e.g. 1.25 -> "+25%")
         let rate_pct = ((speed - 1.0) * 100.0).round() as i32;
         let rate = if rate_pct >= 0 {
             format!("+{}%", rate_pct)
@@ -24,19 +25,24 @@ impl VoiceEngine {
             format!("{}%", rate_pct)
         };
 
+        // Pitch: negative = deeper voice
+        let pitch = "-15Hz".to_string();
+
         let engine = Arc::new(Self {
             voice: "en-GB-RyanNeural".into(),
             rate,
+            pitch,
             enabled: AtomicBool::new(enabled),
             tx,
         });
 
         let voice = engine.voice.clone();
         let rate_clone = engine.rate.clone();
+        let pitch_clone = engine.pitch.clone();
         let engine_clone = engine.clone();
 
         thread::spawn(move || {
-            speech_worker_loop(rx, &voice, &rate_clone, engine_clone);
+            speech_worker_loop(rx, &voice, &rate_clone, &pitch_clone, engine_clone);
         });
 
         engine
@@ -72,6 +78,7 @@ fn speech_worker_loop(
     rx: mpsc::Receiver<String>,
     voice: &str,
     rate: &str,
+    pitch: &str,
     engine: Arc<VoiceEngine>,
 ) {
     // Use a consistent temp file path
@@ -88,6 +95,7 @@ fn speech_worker_loop(
                 "-t", &text,
                 "-v", voice,
                 "--rate", rate,
+                "--pitch", pitch,
                 "--write-media", tmp_path,
             ])
             .stdout(Stdio::null())

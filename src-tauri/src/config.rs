@@ -65,8 +65,8 @@ impl Default for Config {
             vault_path: "~/Documents/vault/JARVIS".into(),
             voice: VoiceConfig {
                 enabled: true,
-                model: "~/.local/share/piper-voices/en_GB-alan-medium.onnx".into(),
-                speed: 1.1,
+                model: "en-GB-RyanNeural".into(),
+                speed: 1.25,
             },
             theme: "dark".into(),
             google: GoogleConfig::default(),
