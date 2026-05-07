@@ -119,6 +119,57 @@ async fn get_voice_status(state: tauri::State<'_, AppState>) -> Result<bool, Str
     Ok(state.voice.is_enabled())
 }
 
+#[tauri::command]
+async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
+    let convos_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/conversations");
+    let _ = std::fs::create_dir_all(&convos_dir);
+
+    let mut convos = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&convos_dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().map(|e| e == "json").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                        convos.push(data);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by updated descending
+    convos.sort_by(|a, b| {
+        let a_time = a.get("updated").and_then(|t| t.as_str()).unwrap_or("");
+        let b_time = b.get("updated").and_then(|t| t.as_str()).unwrap_or("");
+        b_time.cmp(a_time)
+    });
+
+    Ok(convos)
+}
+
+#[tauri::command]
+async fn save_conversation(id: String, data: serde_json::Value) -> Result<(), String> {
+    let convos_dir = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/conversations");
+    let _ = std::fs::create_dir_all(&convos_dir);
+    let path = convos_dir.join(format!("{}.json", id));
+    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_conversation(id: String) -> Result<(), String> {
+    let path = dirs::config_dir()
+        .unwrap_or_default()
+        .join(format!("jarvis/conversations/{}.json", id));
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
 fn main() {
     let config = Config::load();
 
@@ -193,6 +244,9 @@ fn main() {
             reindex_vault,
             toggle_voice,
             get_voice_status,
+            list_conversations,
+            save_conversation,
+            delete_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

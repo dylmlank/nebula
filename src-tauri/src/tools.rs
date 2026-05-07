@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chrono::Local;
+use chrono::{Local, Utc};
 
 /// Parse [TOOL:name key=value] calls from LLM output
 pub fn parse_tool_calls(text: &str) -> Vec<(String, HashMap<String, String>)> {
@@ -892,6 +892,285 @@ pub fn set_context(args: &HashMap<String, String>) -> String {
     }
 }
 
+// ─── Google Integration Tools ───
+
+pub fn google_search(args: &HashMap<String, String>) -> String {
+    let query = args.get("query").cloned().unwrap_or_default();
+    if query.is_empty() {
+        return "Error: no query".into();
+    }
+
+    // Try Google Custom Search API first (if configured)
+    let config_path = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/config.json");
+
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+            let api_key = config.get("google")
+                .and_then(|g| g.get("search_api_key"))
+                .and_then(|k| k.as_str())
+                .unwrap_or("");
+            let cx = config.get("google")
+                .and_then(|g| g.get("search_cx"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+
+            if !api_key.is_empty() && !cx.is_empty() {
+                let url = format!(
+                    "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num=5",
+                    api_key, cx, urlencoding::encode(&query)
+                );
+
+                match Command::new("curl")
+                    .args(["-s", "-m", "10", &url])
+                    .output()
+                {
+                    Ok(output) => {
+                        let body = String::from_utf8_lossy(&output.stdout);
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                            if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                                let results: Vec<String> = items.iter().take(5).map(|item| {
+                                    let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                                    let link = item.get("link").and_then(|l| l.as_str()).unwrap_or("");
+                                    let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                                    format!("• {}\n  {}\n  {}", title, link, snippet)
+                                }).collect();
+                                return results.join("\n\n");
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+
+    // Fallback to DuckDuckGo
+    web_search(args)
+}
+
+pub fn calendar(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "list".into());
+
+    // Load token
+    let token_path = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/google_token.json");
+
+    let access_token = match fs::read_to_string(&token_path) {
+        Ok(content) => {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(token_data) => {
+                    // Check if we need to refresh
+                    let access = token_data.get("access_token")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if access.is_empty() {
+                        return "Not authenticated. Ask the user to run: calendar_auth action=start".into();
+                    }
+                    access
+                }
+                Err(_) => return "Token file corrupted. Re-authenticate with calendar_auth".into(),
+            }
+        }
+        Err(_) => return "Not authenticated with Google. Ask the user to set up Google Calendar in Settings, then use calendar_auth action=start".into(),
+    };
+
+    match action.as_str() {
+        "list" => {
+            let now = chrono::Utc::now().to_rfc3339();
+            let url = format!(
+                "https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=10&orderBy=startTime&singleEvents=true&timeMin={}",
+                urlencoding::encode(&now)
+            );
+
+            match Command::new("curl")
+                .args(["-s", "-m", "10",
+                       "-H", &format!("Authorization: Bearer {}", access_token),
+                       &url])
+                .output()
+            {
+                Ok(output) => {
+                    let body = String::from_utf8_lossy(&output.stdout);
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if let Some(error) = json.get("error") {
+                            return format!("API Error: {}. May need to re-authenticate.", error);
+                        }
+                        if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+                            if items.is_empty() {
+                                return "No upcoming events.".into();
+                            }
+                            let events: Vec<String> = items.iter().map(|item| {
+                                let summary = item.get("summary").and_then(|s| s.as_str()).unwrap_or("(no title)");
+                                let start = item.get("start")
+                                    .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("unknown");
+                                format!("• {} — {}", start, summary)
+                            }).collect();
+                            return format!("Upcoming events:\n{}", events.join("\n"));
+                        }
+                    }
+                    format!("Could not parse response: {}", &body[..body.len().min(200)])
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "create" => {
+            let title = args.get("title").cloned().unwrap_or_else(|| "New Event".into());
+            let date = args.get("date").cloned().unwrap_or_default();
+            let time = args.get("time").cloned().unwrap_or_else(|| "09:00".into());
+            let duration = args.get("duration").and_then(|d| d.parse::<u32>().ok()).unwrap_or(60);
+
+            if date.is_empty() {
+                return "Error: need date (YYYY-MM-DD format)".into();
+            }
+
+            let start = format!("{}T{}:00", date, time);
+            let end_hour = time.split(':').next().and_then(|h| h.parse::<u32>().ok()).unwrap_or(9) + duration / 60;
+            let end_min = time.split(':').nth(1).and_then(|m| m.parse::<u32>().ok()).unwrap_or(0) + duration % 60;
+            let end = format!("{}T{:02}:{:02}:00", date, end_hour, end_min);
+
+            let event_body = serde_json::json!({
+                "summary": title,
+                "start": {"dateTime": start, "timeZone": "local"},
+                "end": {"dateTime": end, "timeZone": "local"},
+            });
+
+            match Command::new("curl")
+                .args(["-s", "-m", "10", "-X", "POST",
+                       "-H", &format!("Authorization: Bearer {}", access_token),
+                       "-H", "Content-Type: application/json",
+                       "-d", &event_body.to_string(),
+                       "https://www.googleapis.com/calendar/v3/calendars/primary/events"])
+                .output()
+            {
+                Ok(output) => {
+                    let body = String::from_utf8_lossy(&output.stdout);
+                    if body.contains("\"htmlLink\"") {
+                        format!("Event created: {}", title)
+                    } else {
+                        format!("Failed to create event: {}", &body[..body.len().min(200)])
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        _ => format!("Unknown calendar action '{}'. Use: list, create", action),
+    }
+}
+
+pub fn calendar_auth(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "start".into());
+
+    let config_path = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/config.json");
+    let token_path = dirs::config_dir()
+        .unwrap_or_default()
+        .join("jarvis/google_token.json");
+
+    let config_content = fs::read_to_string(&config_path).unwrap_or_default();
+    let config: serde_json::Value = serde_json::from_str(&config_content).unwrap_or_default();
+
+    let client_id = config.get("google")
+        .and_then(|g| g.get("client_id"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+    let client_secret = config.get("google")
+        .and_then(|g| g.get("client_secret"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+
+    if client_id.is_empty() || client_secret.is_empty() {
+        return "Error: Set google.client_id and google.client_secret in Settings first.".into();
+    }
+
+    match action.as_str() {
+        "start" => {
+            // Device code flow - step 1
+            let result = Command::new("curl")
+                .args(["-s", "-X", "POST",
+                       "-d", &format!("client_id={}&scope=https://www.googleapis.com/auth/calendar", client_id),
+                       "https://oauth2.googleapis.com/device/code"])
+                .output();
+
+            match result {
+                Ok(output) => {
+                    let body = String::from_utf8_lossy(&output.stdout);
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        let verification_url = json.get("verification_url")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("https://www.google.com/device");
+                        let user_code = json.get("user_code")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("???");
+                        let device_code = json.get("device_code")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("");
+
+                        // Save device code for polling
+                        let pending = serde_json::json!({"device_code": device_code, "client_id": client_id, "client_secret": client_secret});
+                        let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+                        let _ = fs::write(&pending_path, pending.to_string());
+
+                        format!("Go to {} and enter code: {}\n\nThen tell me to run: [TOOL:calendar_auth action=poll]", verification_url, user_code)
+                    } else {
+                        format!("Error from Google: {}", &body[..body.len().min(300)])
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "poll" => {
+            let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+            let pending_content = match fs::read_to_string(&pending_path) {
+                Ok(c) => c,
+                Err(_) => return "No pending auth. Run calendar_auth action=start first.".into(),
+            };
+            let pending: serde_json::Value = serde_json::from_str(&pending_content).unwrap_or_default();
+
+            let device_code = pending.get("device_code").and_then(|d| d.as_str()).unwrap_or("");
+            let client_id = pending.get("client_id").and_then(|c| c.as_str()).unwrap_or("");
+            let client_secret = pending.get("client_secret").and_then(|c| c.as_str()).unwrap_or("");
+
+            let result = Command::new("curl")
+                .args(["-s", "-X", "POST",
+                       "-d", &format!("client_id={}&client_secret={}&device_code={}&grant_type=urn:ietf:params:oauth:grant-type:device_code",
+                                     client_id, client_secret, device_code),
+                       "https://oauth2.googleapis.com/token"])
+                .output();
+
+            match result {
+                Ok(output) => {
+                    let body = String::from_utf8_lossy(&output.stdout);
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if json.get("access_token").is_some() {
+                            let _ = fs::write(&token_path, body.as_ref());
+                            let _ = fs::remove_file(&pending_path);
+                            "Google Calendar authenticated successfully!".into()
+                        } else if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
+                            if error == "authorization_pending" {
+                                "Still waiting for you to authorize. Visit the URL and enter the code, then try again.".into()
+                            } else {
+                                format!("Auth error: {}", error)
+                            }
+                        } else {
+                            format!("Unexpected response: {}", &body[..body.len().min(200)])
+                        }
+                    } else {
+                        format!("Parse error: {}", &body[..body.len().min(200)])
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        _ => "Use action=start to begin auth, action=poll after entering the code.".into(),
+    }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -939,6 +1218,9 @@ impl ToolRegistry {
             "processes" => processes(args),
             "kill_process" => kill_process(args),
             "set_context" => set_context(args),
+            "google_search" => google_search(args),
+            "calendar" => calendar(args),
+            "calendar_auth" => calendar_auth(args),
             _ => self.run_custom_tool(name, args),
         }
     }
@@ -948,10 +1230,11 @@ impl ToolRegistry {
         if !script_path.exists() {
             return format!(
                 "Unknown tool '{}'. Available: run_command, read_file, write_file, list_files, \
-                 web_search, web_fetch, clipboard, notify, open_url, datetime, calc, system_info, \
-                 remember, knowledge_search, knowledge_save, save_decision, save_idea, \
+                 web_search, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, \
+                 system_info, remember, knowledge_search, knowledge_save, save_decision, save_idea, \
                  save_learning, save_person, recall, daily_summary, pip_install, git, \
-                 multi_command, find_files, replace_in_file, processes, kill_process, set_context",
+                 multi_command, find_files, replace_in_file, processes, kill_process, set_context, \
+                 calendar, calendar_auth",
                 name
             );
         }

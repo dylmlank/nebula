@@ -10,6 +10,29 @@ pub struct VoiceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleConfig {
+    #[serde(default)]
+    pub search_api_key: String,
+    #[serde(default)]
+    pub search_cx: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+}
+
+impl Default for GoogleConfig {
+    fn default() -> Self {
+        Self {
+            search_api_key: String::new(),
+            search_cx: String::new(),
+            client_id: String::new(),
+            client_secret: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub api_key: String,
     pub base_url: String,
@@ -21,6 +44,8 @@ pub struct Config {
     pub vault_path: String,
     pub voice: VoiceConfig,
     pub theme: String,
+    #[serde(default)]
+    pub google: GoogleConfig,
 }
 
 impl Default for Config {
@@ -44,6 +69,7 @@ impl Default for Config {
                 speed: 1.1,
             },
             theme: "dark".into(),
+            google: GoogleConfig::default(),
         }
     }
 }
