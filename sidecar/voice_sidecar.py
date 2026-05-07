@@ -56,7 +56,8 @@ def main():
     SAMPLE_RATE = 16000
     CHANNELS = 1
     BLOCK_SIZE = 1024
-    SILENCE_THRESHOLD = 0.01
+    SPEECH_THRESHOLD = 0.04  # RMS level that indicates actual speech (not just noise)
+    SILENCE_THRESHOLD = 0.015  # Below this = silence (for end-of-speech detection)
     SILENCE_DURATION = 1.5  # seconds of silence to stop recording
     WAKE_WORDS = ["jarvis", "hey jarvis", "yo jarvis", "okay jarvis"]
 
@@ -71,9 +72,9 @@ def main():
 
     def detect_wake_word(audio_data: np.ndarray) -> bool:
         """Check if audio contains the wake word using Whisper."""
-        # Only process if there's actual sound
+        # Only process if there's speech-level audio (not just ambient noise)
         rms = np.sqrt(np.mean(audio_data ** 2))
-        if rms < SILENCE_THRESHOLD:
+        if rms < SPEECH_THRESHOLD:
             return False
 
         # Transcribe with tiny model
@@ -85,6 +86,8 @@ def main():
         )
 
         text = " ".join(s.text.lower().strip() for s in segments)
+        if text:
+            emit("status", message=f"Heard: {text[:30]}")
         return any(wake in text for wake in WAKE_WORDS)
 
     def transcribe_speech(audio_data: np.ndarray) -> str:
@@ -116,7 +119,7 @@ def main():
                            blocksize=BLOCK_SIZE, callback=audio_callback):
             buffer = []
             buffer_duration = 0
-            WAKE_BUFFER_SECS = 2  # Check wake word every 2 seconds
+            WAKE_BUFFER_SECS = 3  # Check wake word every 3 seconds (more context for Whisper)
             speech_buffer = []
             silence_counter = 0
 
