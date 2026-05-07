@@ -75,6 +75,7 @@ listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) 
     voiceChat(ev.text);
   }
   else if (ev.type === "stopped") { voiceModeActive = false; voiceState = "idle"; render(); }
+  else if (ev.type === "status" && ev.message) { voiceTranscript = ev.message; render(); }
   else if (ev.type === "error" && ev.message) {
     voiceTranscript = `Error: ${ev.message}`;
     render();

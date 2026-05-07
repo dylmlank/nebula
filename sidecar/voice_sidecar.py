@@ -46,7 +46,7 @@ def main():
         return
 
     # Load Whisper model (tiny for speed — wake word doesn't need accuracy)
-    emit("error", message="Loading Whisper model...")
+    emit("status", message="Loading Whisper model...")
     model = WhisperModel("tiny", device="cpu", compute_type="int8")
     emit("ready")
 
