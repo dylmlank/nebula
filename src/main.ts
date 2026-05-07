@@ -67,11 +67,22 @@ listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) 
   if (ev.type === "ready") { voiceState = "idle"; voiceModeActive = true; voiceTranscript = ""; render(); }
   else if (ev.type === "wake") { voiceState = "wake"; render(); }
   else if (ev.type === "listening") { voiceState = "listening"; render(); }
+  else if (ev.type === "interrupt") {
+    // User spoke while JARVIS was talking — kill TTS
+    invoke("stop_speaking").catch(() => {});
+    voiceTranscript = "Interrupted — listening...";
+    render();
+  }
+  else if (ev.type === "resume") {
+    // User said resume/continue — do nothing special, just acknowledge
+    voiceTranscript = "";
+    voiceState = "wake";
+    render();
+  }
   else if (ev.type === "transcript" && ev.text) {
     voiceTranscript = ev.text;
     voiceState = "processing";
     render();
-    // Send to brain and speak the response — stays in voice tab
     voiceChat(ev.text);
   }
   else if (ev.type === "stopped") { voiceModeActive = false; voiceState = "idle"; render(); }

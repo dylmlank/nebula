@@ -110,8 +110,8 @@ def main():
     # Main loop
     try:
         # Fixed thresholds
-        speech_start = 0.06  # Start recording — needs clear speech (filters background noise)
-        silence_level = 0.03  # Stop recording when RMS drops below this
+        speech_start = 0.10  # High threshold — only deliberate speech triggers recording
+        silence_level = 0.04  # Stop recording when RMS drops below this
 
         emit("wake")  # Ready to listen immediately
 
@@ -149,7 +149,15 @@ def main():
             text = transcribe_speech(audio_data)
 
             if text and len(text) > 1:
-                emit("transcript", text=text)
+                # Check if user is interrupting (said something while JARVIS was talking)
+                text_lower = text.lower().strip()
+                if text_lower in ("resume", "continue", "go on", "keep going"):
+                    emit("resume")
+                else:
+                    # Any other speech = interrupt JARVIS, then send transcript
+                    emit("interrupt")
+                    time.sleep(0.1)  # Let interrupt propagate
+                    emit("transcript", text=text)
 
             # Ready for next utterance
             emit("wake")

@@ -204,6 +204,15 @@ async fn speak_response(state: tauri::State<'_, AppState>, text: String) -> Resu
 }
 
 #[tauri::command]
+async fn stop_speaking() -> Result<(), String> {
+    // Kill any running piper/aplay processes to stop speech immediately
+    let _ = std::process::Command::new("pkill").args(["-f", "piper"]).output();
+    let _ = std::process::Command::new("pkill").args(["-f", "aplay"]).output();
+    Ok(())
+}
+}
+
+#[tauri::command]
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
@@ -334,6 +343,7 @@ fn main() {
             start_voice_mode,
             stop_voice_mode,
             speak_response,
+            stop_speaking,
             get_system_state,
         ])
         .run(tauri::generate_context!())
