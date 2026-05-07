@@ -186,6 +186,28 @@ function updateToolDisplay() {
   document.getElementById("chat-area")?.scrollTo(0, 99999);
 }
 
+// ── System State HUD ──
+let systemState: any = null;
+async function pollSystemState() {
+  try { systemState = await invoke("get_system_state"); } catch {}
+}
+
+function renderHUD(): string {
+  if (!systemState) return '';
+  const hw = systemState.hardware || {};
+  const ws = systemState.workspace || {};
+  const periph = systemState.peripherals || {};
+  const procs = systemState.processes || {};
+  return `<div class="hud-bar">
+    <span class="hud-item">CPU <span class="hud-val">${hw.cpu_usage?.toFixed(0) || 0}%</span></span>
+    <span class="hud-item">RAM <span class="hud-val">${hw.memory_percent?.toFixed(0) || 0}%</span></span>
+    <span class="hud-item">DISK <span class="hud-val">${hw.disk_free_gb?.toFixed(0) || '?'}G</span></span>
+    <span class="hud-item">MODE <span class="hud-val">${(ws.current_mode || 'general').toUpperCase()}</span></span>
+    <span class="hud-item"><span class="hud-dot ${periph.microphone_active ? 'on' : ''}"></span>MIC</span>
+    <span class="hud-item"><span class="hud-dot ${periph.webcam_active ? 'on' : ''}"></span>CAM</span>
+  </div>`;
+}
+
 // ── Main Render ──
 function render() {
   const app = document.getElementById("app")!;
@@ -205,6 +227,7 @@ function render() {
         </div>
       </aside>
       <div class="main">
+        ${renderHUD()}
         <header class="topbar">
           <div class="topbar-left">
             <button class="btn-toggle-sidebar" id="btn-sidebar">${sidebarOpen ? "◀" : "☰"}</button>
@@ -417,4 +440,10 @@ function applyTheme() { document.documentElement.setAttribute("data-theme", them
 
 // ── Init ──
 applyTheme();
-loadConversations().then(() => render());
+render();
+(async () => {
+  try { await loadConversations(); } catch {}
+  try { await pollSystemState(); } catch {}
+  render();
+  setInterval(pollSystemState, 5000);
+})();

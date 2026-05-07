@@ -2,6 +2,7 @@
 
 mod brain;
 mod config;
+mod observer;
 mod tools;
 mod vault;
 mod voice;
@@ -114,6 +115,11 @@ async fn toggle_voice(state: tauri::State<'_, AppState>) -> Result<bool, String>
 #[tauri::command]
 async fn get_voice_status(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.voice.is_enabled())
+}
+
+#[tauri::command]
+async fn get_system_state() -> Result<observer::SystemState, String> {
+    Ok(observer::gather_system_state())
 }
 
 #[tauri::command]
@@ -328,6 +334,7 @@ fn main() {
             start_voice_mode,
             stop_voice_mode,
             speak_response,
+            get_system_state,
         ])
         .run(tauri::generate_context!())
         .expect("error running JARVIS");

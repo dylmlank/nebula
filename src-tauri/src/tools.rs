@@ -1551,6 +1551,38 @@ pub fn security_audit(args: &HashMap<String, String>) -> String {
     else { format!("Security Audit:\n\n{}", results.join("\n\n")) }
 }
 
+// ─── Agentic Tools (v4) ───
+
+pub fn configure_workspace(args: &HashMap<String, String>) -> String {
+    let mode = args.get("mode").cloned().unwrap_or_else(|| "coding".into());
+    let sidecar = dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/workspace.py");
+
+    match Command::new("python3").arg(&sidecar).arg(&mode).output() {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if out.is_empty() { format!("Workspace set to: {}", mode) } else { out }
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+pub fn vision_snapshot(args: &HashMap<String, String>) -> String {
+    let prompt = args.get("prompt").cloned().unwrap_or_else(|| "Describe what you see on the desk. List all objects.".into());
+    let sidecar = dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/vision.py");
+
+    match Command::new("python3").arg(&sidecar).output() {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if out.is_empty() {
+                "Could not capture vision. Ensure webcam is available.".into()
+            } else {
+                out
+            }
+        }
+        Err(e) => format!("Vision error: {}", e),
+    }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -1606,6 +1638,8 @@ impl ToolRegistry {
             "bluetooth" => bluetooth(args),
             "service" => service_manage(args),
             "security_audit" => security_audit(args),
+            "configure_workspace" => configure_workspace(args),
+            "vision_snapshot" => vision_snapshot(args),
             _ => self.run_custom_tool(name, args),
         }
     }

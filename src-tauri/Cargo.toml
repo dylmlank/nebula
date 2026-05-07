@@ -23,6 +23,7 @@ uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 walkdir = "2"
+sysinfo = "0.35"
 
 [profile.release]
 strip = true

@@ -353,6 +353,23 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 .anim-in { animation: slideIn 0.25s var(--transition) forwards; }
 @keyframes slideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
+/* System HUD */
+.hud-bar {
+  display: flex;
+  gap: 14px;
+  padding: 4px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}
+.hud-item { display: flex; align-items: center; gap: 4px; }
+.hud-val { color: var(--accent); font-weight: 600; }
+.hud-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.hud-dot.on { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
+
 /* hljs */
 .hljs { color: var(--text); }
 
