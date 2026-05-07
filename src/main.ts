@@ -187,6 +187,30 @@ function updateToolDisplay() {
 }
 
 // ── Main Render ──
+// ── System State HUD ──
+let systemState: any = null;
+async function pollSystemState() {
+  try { systemState = await invoke("get_system_state"); } catch {}
+}
+setInterval(pollSystemState, 5000); // Poll every 5s
+
+function renderHUD(): string {
+  if (!systemState) return '<div class="hud-bar"><span class="hud-item">SYSTEM OFFLINE</span></div>';
+  const hw = systemState.hardware || {};
+  const procs = systemState.processes || {};
+  const ws = systemState.workspace || {};
+  const periph = systemState.peripherals || {};
+  return `<div class="hud-bar">
+    <span class="hud-item">CPU <span class="hud-value">${hw.cpu_usage?.toFixed(0) || 0}%</span></span>
+    <span class="hud-item">RAM <span class="hud-value">${hw.memory_percent?.toFixed(0) || 0}%</span></span>
+    <span class="hud-item">DISK <span class="hud-value">${hw.disk_free_gb?.toFixed(0) || 0}G</span></span>
+    <span class="hud-item">MODE <span class="hud-value">${ws.current_mode?.toUpperCase() || 'GENERAL'}</span></span>
+    <span class="hud-item"><span class="hud-dot ${periph.microphone_active ? '' : 'inactive'}"></span>MIC</span>
+    <span class="hud-item"><span class="hud-dot ${periph.webcam_active ? '' : 'inactive'}"></span>CAM</span>
+    <span class="hud-item">WIN <span class="hud-value">${(procs.active_window || 'unknown').slice(0, 25)}</span></span>
+  </div>`;
+}
+
 function render() {
   const app = document.getElementById("app")!;
   app.innerHTML = `
@@ -205,6 +229,7 @@ function render() {
         </div>
       </aside>
       <div class="main">
+        ${renderHUD()}
         <header class="topbar">
           <div class="topbar-left">
             <button class="btn-toggle-sidebar" id="btn-sidebar">${sidebarOpen ? "◀" : "☰"}</button>
