@@ -64,7 +64,7 @@ listen<string>("chat-done", () => {
 // Voice mode events from Python sidecar
 listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) => {
   const ev = e.payload;
-  if (ev.type === "ready") { voiceState = "idle"; voiceModeActive = true; render(); }
+  if (ev.type === "ready") { voiceState = "idle"; voiceModeActive = true; voiceTranscript = ""; render(); }
   else if (ev.type === "wake") { voiceState = "wake"; render(); }
   else if (ev.type === "listening") { voiceState = "listening"; render(); }
   else if (ev.type === "transcript" && ev.text) {

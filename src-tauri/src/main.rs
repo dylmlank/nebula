@@ -147,7 +147,7 @@ async fn start_voice_mode(app: AppHandle) -> Result<String, String> {
             .arg(&script_path)
             .stdout(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn()
         {
             Ok(c) => c,
@@ -158,7 +158,17 @@ async fn start_voice_mode(app: AppHandle) -> Result<String, String> {
         };
 
         let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
         let mut reader = BufReader::new(stdout).lines();
+
+        // Log stderr in background
+        let _app_err = app_handle.clone();
+        tokio::spawn(async move {
+            let mut err_reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = err_reader.next_line().await {
+                eprintln!("[voice-sidecar] {}", line);
+            }
+        });
 
         while let Ok(Some(line)) = reader.next_line().await {
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {

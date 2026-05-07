@@ -33,6 +33,8 @@ def emit(event_type: str, **kwargs):
     print(json.dumps(data), flush=True)
 
 def main():
+    emit("status", message="Starting voice engine...")
+
     try:
         import sounddevice as sd
     except ImportError:
@@ -40,13 +42,13 @@ def main():
         return
 
     try:
+        emit("status", message="Loading speech model (first time takes ~5s)...")
         from faster_whisper import WhisperModel
     except ImportError:
         emit("error", message="Install faster-whisper: pip install faster-whisper")
         return
 
     # Load Whisper model (tiny for speed — wake word doesn't need accuracy)
-    emit("status", message="Loading Whisper model...")
     model = WhisperModel("tiny", device="cpu", compute_type="int8")
     emit("ready")
 
