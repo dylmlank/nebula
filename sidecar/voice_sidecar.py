@@ -109,18 +109,14 @@ def main():
 
     # Main loop
     try:
-        # Calibrate: measure 1s of ambient noise
-        emit("status", message="Calibrating...")
-        cal_audio = sd.rec(int(SAMPLE_RATE * 1), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
-        sd.wait()
-        ambient_level = np.sqrt(np.mean(cal_audio ** 2))
-        speech_start = max(ambient_level * 3.0, 0.03)
-        silence_level = max(ambient_level * 1.5, 0.01)
+        # Fixed thresholds — no calibration needed
+        speech_start = 0.05  # Start recording when RMS exceeds this
+        silence_level = 0.02  # Stop recording when RMS drops below this
 
-        emit("wake")  # Ready to listen
+        emit("wake")  # Ready to listen immediately
 
         while not should_quit:
-            # Wait for speech — record 0.5s chunks and check level
+            # Wait for speech — record short chunks and check level
             chunk = sd.rec(int(SAMPLE_RATE * 0.5), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
             sd.wait()
             rms = np.sqrt(np.mean(chunk ** 2))
@@ -145,8 +141,7 @@ def main():
                     silence_counter = 0
 
                 # Max 30s
-                total_time = sum(len(p) for p in speech_parts) / SAMPLE_RATE
-                if total_time > 30:
+                if sum(len(p) for p in speech_parts) / SAMPLE_RATE > 30:
                     break
 
             # Transcribe
@@ -155,8 +150,6 @@ def main():
 
             if text and len(text) > 1:
                 emit("transcript", text=text)
-            else:
-                emit("wake")
 
             # Ready for next utterance
             emit("wake")
