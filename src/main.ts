@@ -35,18 +35,30 @@ listen<{name: string, args: string}>("tool-start", (e) => { activeTool = { name:
 listen<{name: string, result: string}>("tool-result", (e) => { if (activeTool) { activeTool.result = e.payload.result; activeTool.status = "done"; activeTool = null; } updateToolDisplay(); });
 listen<string>("chat-done", () => {
   if (streamBuffer) {
-    messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] });
-    // Speak response only if it was initiated from voice mode
-    if (voiceInitiatedMessage && voiceModeActive) {
-      invoke("toggle_voice").then(() => {
-        // Ensure TTS is on, speak, then turn off
-      });
-      // Just use the existing voice engine to speak this one response
+    if (voiceInitiatedMessage) {
+      // Voice mode: speak the response, don't add to chat messages
       invoke("speak_response", { text: streamBuffer }).catch(() => {});
+      voiceTranscript = "";
+      voiceState = "idle";
+      voiceInitiatedMessage = false;
+      streamBuffer = "";
+      isStreaming = false;
+      activeTool = null;
+      toolHistory = [];
+      render();
+    } else {
+      // Chat mode: add to messages as normal
+      messages.push({ id: uid(), role: "assistant", content: streamBuffer, tools: [...toolHistory] });
+      streamBuffer = "";
+      isStreaming = false;
+      activeTool = null;
+      toolHistory = [];
+      saveCurrentConvo();
+      render();
     }
-    voiceInitiatedMessage = false;
+  } else {
+    streamBuffer = ""; isStreaming = false; activeTool = null; toolHistory = []; voiceInitiatedMessage = false; render();
   }
-  streamBuffer = ""; isStreaming = false; activeTool = null; toolHistory = []; saveCurrentConvo(); render();
 });
 
 // Voice mode events from Python sidecar
@@ -58,12 +70,9 @@ listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) 
   else if (ev.type === "transcript" && ev.text) {
     voiceTranscript = ev.text;
     voiceState = "processing";
-    voiceInitiatedMessage = true;
     render();
-    // Auto-send the transcript as a message
-    sendMessage(ev.text);
-    // Switch to chat to see the response
-    setTimeout(() => { currentPanel = "chat"; render(); }, 500);
+    // Send to brain and speak the response — stays in voice tab
+    voiceChat(ev.text);
   }
   else if (ev.type === "stopped") { voiceModeActive = false; voiceState = "idle"; render(); }
   else if (ev.type === "error" && ev.message) {
@@ -86,6 +95,18 @@ async function searchVault(query: string) {
   vaultQuery = query;
   try { vaultResults = await invoke<VaultResult[]>("search_vault", { query }); } catch { vaultResults = []; }
   render();
+}
+
+// Voice-only conversation (no text UI, speaks response)
+async function voiceChat(text: string) {
+  try {
+    await invoke("send_message", { message: text });
+    voiceInitiatedMessage = true;
+  } catch (e) {
+    voiceTranscript = `Error: ${e}`;
+    voiceState = "idle";
+    render();
+  }
 }
 
 // ── Conversations ──
