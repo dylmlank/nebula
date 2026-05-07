@@ -1,5 +1,4 @@
 use regex::Regex;
-use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -7,30 +6,37 @@ use std::sync::mpsc;
 use std::thread;
 
 pub struct VoiceEngine {
-    model_path: String,
-    speed: f32,
+    voice: String,
+    rate: String,
     pub enabled: AtomicBool,
     tx: mpsc::Sender<String>,
 }
 
 impl VoiceEngine {
-    pub fn new(model_path: String, speed: f32, enabled: bool) -> Arc<Self> {
+    pub fn new(_model_path: String, speed: f32, enabled: bool) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<String>();
 
+        // Convert speed to edge-tts rate format (e.g. 1.1 -> "+10%", 0.9 -> "-10%")
+        let rate_pct = ((speed - 1.0) * 100.0).round() as i32;
+        let rate = if rate_pct >= 0 {
+            format!("+{}%", rate_pct)
+        } else {
+            format!("{}%", rate_pct)
+        };
+
         let engine = Arc::new(Self {
-            model_path: model_path.clone(),
-            speed,
+            voice: "en-GB-RyanNeural".into(),
+            rate,
             enabled: AtomicBool::new(enabled),
             tx,
         });
 
-        // Spawn background speech worker thread
-        let model_clone = model_path;
-        let speed_clone = speed;
+        let voice = engine.voice.clone();
+        let rate_clone = engine.rate.clone();
         let engine_clone = engine.clone();
 
         thread::spawn(move || {
-            speech_worker_loop(rx, &model_clone, speed_clone, engine_clone);
+            speech_worker_loop(rx, &voice, &rate_clone, engine_clone);
         });
 
         engine
@@ -64,59 +70,44 @@ impl VoiceEngine {
 /// Background worker that processes speech queue sequentially
 fn speech_worker_loop(
     rx: mpsc::Receiver<String>,
-    model_path: &str,
-    speed: f32,
+    voice: &str,
+    rate: &str,
     engine: Arc<VoiceEngine>,
 ) {
+    // Use a consistent temp file path
+    let tmp_path = "/tmp/jarvis-tts.mp3";
+
     while let Ok(text) = rx.recv() {
         if !engine.enabled.load(Ordering::Relaxed) {
             continue;
         }
 
-        let speed_str = format!("{:.1}", speed);
-
-        // Spawn piper | aplay pipeline
-        let piper = Command::new("piper")
+        // Generate audio with edge-tts
+        let tts_result = Command::new("edge-tts")
             .args([
-                "--model", model_path,
-                "--output_raw",
-                "--length-scale", &speed_str,
+                "-t", &text,
+                "-v", voice,
+                "--rate", rate,
+                "--write-media", tmp_path,
             ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
-
-        let mut piper = match piper {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        let piper_stdout = match piper.stdout.take() {
-            Some(s) => s,
-            None => continue,
-        };
-
-        let mut aplay = match Command::new("aplay")
-            .args(["-r", "22050", "-f", "S16_LE", "-t", "raw", "-"])
-            .stdin(piper_stdout)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(a) => a,
-            Err(_) => continue,
-        };
+            .status();
 
-        // Write text to piper stdin
-        if let Some(mut stdin) = piper.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-            // Drop stdin to close it, signaling EOF to piper
+        match tts_result {
+            Ok(status) if status.success() => {}
+            _ => continue,
         }
 
-        // Wait for aplay to finish (piper feeds it)
-        let _ = aplay.wait();
-        let _ = piper.wait();
+        // Play with ffplay (no window, quiet)
+        let _ = Command::new("ffplay")
+            .args([
+                "-nodisp", "-autoexit", "-loglevel", "quiet",
+                tmp_path,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
