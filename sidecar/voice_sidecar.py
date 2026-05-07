@@ -58,7 +58,7 @@ def main():
     BLOCK_SIZE = 1024
     SPEECH_THRESHOLD = 0.04  # RMS level that indicates actual speech (not just noise)
     SILENCE_THRESHOLD = 0.015  # Below this = silence (for end-of-speech detection)
-    SILENCE_DURATION = 1.5  # seconds of silence to stop recording
+    SILENCE_DURATION = 1.0  # seconds of silence to stop recording (fast cutoff)
     WAKE_WORDS = ["jarvis", "hey jarvis", "yo jarvis", "okay jarvis"]
 
     audio_queue = queue.Queue()
@@ -85,12 +85,12 @@ def main():
         return any(wake in text for wake in WAKE_WORDS)
 
     def transcribe_speech(audio_data: np.ndarray) -> str:
-        """Transcribe full speech with better accuracy."""
+        """Transcribe full speech — fast mode."""
         segments, _ = model.transcribe(
             audio_data.flatten().astype(np.float32),
             language="en",
             vad_filter=True,
-            beam_size=3,
+            beam_size=1,
         )
         return " ".join(s.text.strip() for s in segments).strip()
 
@@ -117,7 +117,7 @@ def main():
 
         while not should_quit:
             # Wait for speech — record short chunks and check level
-            chunk = sd.rec(int(SAMPLE_RATE * 0.5), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+            chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
             sd.wait()
             rms = np.sqrt(np.mean(chunk ** 2))
 
@@ -130,13 +130,13 @@ def main():
             silence_counter = 0
 
             while silence_counter < SILENCE_DURATION:
-                part = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+                part = sd.rec(int(SAMPLE_RATE * 0.2), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
                 sd.wait()
                 part_rms = np.sqrt(np.mean(part ** 2))
                 speech_parts.append(part)
 
                 if part_rms < silence_level:
-                    silence_counter += 0.3
+                    silence_counter += 0.2
                 else:
                     silence_counter = 0
 
