@@ -65,7 +65,7 @@ impl Default for Config {
             vault_path: "~/Documents/vault/JARVIS".into(),
             voice: VoiceConfig {
                 enabled: true,
-                model: "en-GB-RyanNeural".into(),
+                model: "/home/dylan/.local/share/piper-voices/en_US-ryan-high.onnx".into(),
                 speed: 1.25,
             },
             theme: "dark".into(),

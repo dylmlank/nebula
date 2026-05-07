@@ -1,48 +1,47 @@
 use regex::Regex;
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
+const PIPER_BIN: &str = "/home/dylan/.local/bin/piper/piper";
+const DEFAULT_MODEL: &str = "/home/dylan/.local/share/piper-voices/en_US-ryan-high.onnx";
+
 pub struct VoiceEngine {
-    voice: String,
-    rate: String,
-    pitch: String,
+    model_path: String,
+    length_scale: String,
     pub enabled: AtomicBool,
     tx: mpsc::Sender<String>,
 }
 
 impl VoiceEngine {
-    pub fn new(_model_path: String, speed: f32, enabled: bool) -> Arc<Self> {
+    pub fn new(model_path: String, speed: f32, enabled: bool) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<String>();
 
-        // Convert speed to edge-tts rate format (e.g. 1.25 -> "+25%")
-        let rate_pct = ((speed - 1.0) * 100.0).round() as i32;
-        let rate = if rate_pct >= 0 {
-            format!("+{}%", rate_pct)
+        // Use provided model or default to high-quality ryan
+        let model = if model_path.is_empty() || model_path.contains("edge") || model_path.contains("Neural") {
+            DEFAULT_MODEL.to_string()
         } else {
-            format!("{}%", rate_pct)
+            model_path
         };
 
-        // Pitch: negative = deeper voice
-        let pitch = "-15Hz".to_string();
+        // Convert speed to length_scale (inverse: higher speed = lower scale)
+        // speed 1.25 -> length_scale 0.8
+        let length_scale = format!("{:.2}", 1.0 / speed);
 
         let engine = Arc::new(Self {
-            voice: "en-GB-RyanNeural".into(),
-            rate,
-            pitch,
+            model_path: model.clone(),
+            length_scale: length_scale.clone(),
             enabled: AtomicBool::new(enabled),
             tx,
         });
 
-        let voice = engine.voice.clone();
-        let rate_clone = engine.rate.clone();
-        let pitch_clone = engine.pitch.clone();
         let engine_clone = engine.clone();
 
         thread::spawn(move || {
-            speech_worker_loop(rx, &voice, &rate_clone, &pitch_clone, engine_clone);
+            speech_worker_loop(rx, &model, &length_scale, engine_clone);
         });
 
         engine
@@ -76,46 +75,57 @@ impl VoiceEngine {
 /// Background worker that processes speech queue sequentially
 fn speech_worker_loop(
     rx: mpsc::Receiver<String>,
-    voice: &str,
-    rate: &str,
-    pitch: &str,
+    model_path: &str,
+    length_scale: &str,
     engine: Arc<VoiceEngine>,
 ) {
-    // Use a consistent temp file path
-    let tmp_path = "/tmp/jarvis-tts.mp3";
-
     while let Ok(text) = rx.recv() {
         if !engine.enabled.load(Ordering::Relaxed) {
             continue;
         }
 
-        // Generate audio with edge-tts
-        let tts_result = Command::new("edge-tts")
+        // Spawn piper | aplay pipeline — zero latency, streams directly
+        let piper = Command::new(PIPER_BIN)
             .args([
-                "-t", &text,
-                "-v", voice,
-                "--rate", rate,
-                "--pitch", pitch,
-                "--write-media", tmp_path,
+                "--model", model_path,
+                "--output_raw",
+                "--length-scale", length_scale,
             ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+
+        let mut piper = match piper {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let piper_stdout = match piper.stdout.take() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let mut aplay = match Command::new("aplay")
+            .args(["-r", "22050", "-f", "S16_LE", "-t", "raw", "-"])
+            .stdin(piper_stdout)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status();
+            .spawn()
+        {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
 
-        match tts_result {
-            Ok(status) if status.success() => {}
-            _ => continue,
+        // Write text to piper stdin
+        if let Some(mut stdin) = piper.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+            // Drop stdin to close it, signaling EOF to piper
         }
 
-        // Play with ffplay (no window, quiet)
-        let _ = Command::new("ffplay")
-            .args([
-                "-nodisp", "-autoexit", "-loglevel", "quiet",
-                tmp_path,
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // Wait for aplay to finish
+        let _ = aplay.wait();
+        let _ = piper.wait();
     }
 }
 
