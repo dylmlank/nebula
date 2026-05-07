@@ -111,6 +111,16 @@ async function searchVault(query: string) {
 }
 
 // ── Markdown Rendering ──
+function stripToolTokens(text: string): string {
+  // Remove [TOOL:name args] tokens
+  text = text.replace(/\[TOOL:\w+[^\]]*\]/g, "");
+  // Remove [CREATE_TOOL:name]...code...[/CREATE_TOOL] blocks
+  text = text.replace(/\[CREATE_TOOL:\w+\][\s\S]*?\[\/CREATE_TOOL\]/g, "");
+  // Clean up leftover whitespace
+  text = text.replace(/\n{3,}/g, "\n\n").trim();
+  return text;
+}
+
 function md(text: string): string {
   let s = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
@@ -146,7 +156,7 @@ function updateStreamingBubble() {
     chatArea.appendChild(bubble);
   }
   const body = bubble.querySelector(".message-body");
-  if (body) body.innerHTML = md(streamBuffer);
+  if (body) body.innerHTML = md(stripToolTokens(streamBuffer));
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
@@ -213,7 +223,7 @@ function renderChat(): string {
     const label = m.role === "user" ? "YOU" : "JARVIS";
     const body = m.role === "user"
       ? m.content.replace(/</g, "&lt;").replace(/\n/g, "<br>")
-      : md(m.content);
+      : md(stripToolTokens(m.content));
     const toolsHtml = m.tools?.length
       ? `<div class="tool-area">${m.tools.map(t => `<div class="tool-exec"><div class="tool-header">✓ <span class="tool-name">${t.name}</span>(${t.args.replace(/</g, "&lt;")})</div>${t.result ? `<div class="tool-result">${t.result.replace(/</g, "&lt;").slice(0, 150)}</div>` : ""}</div>`).join("")}</div>`
       : "";
