@@ -121,7 +121,27 @@ def main():
             silence_counter = 0
             is_speaking = False
 
-            emit("wake")  # Immediately ready to listen
+            # Calibrate: measure ambient noise for 1 second
+            emit("status", message="Calibrating microphone...")
+            ambient_samples = []
+            cal_start = time.time()
+            while time.time() - cal_start < 1.0:
+                try:
+                    data = audio_queue.get(timeout=0.2)
+                    ambient_samples.append(np.sqrt(np.mean(data ** 2)))
+                except queue.Empty:
+                    pass
+
+            if ambient_samples:
+                ambient_level = np.mean(ambient_samples)
+                # Speech must be 3x ambient, silence is 1.5x ambient
+                speech_start = max(ambient_level * 3.0, 0.03)
+                silence_level = ambient_level * 1.5
+            else:
+                speech_start = SPEECH_THRESHOLD
+                silence_level = SILENCE_THRESHOLD
+
+            emit("wake")  # Ready to listen
 
             while not should_quit:
                 try:
@@ -133,7 +153,7 @@ def main():
 
                 if not is_speaking:
                     # Waiting for user to start talking
-                    if rms >= SPEECH_THRESHOLD:
+                    if rms >= speech_start:
                         is_speaking = True
                         speech_buffer = [data]
                         silence_counter = 0
@@ -142,7 +162,7 @@ def main():
                     # Recording user speech
                     speech_buffer.append(data)
 
-                    if rms < SILENCE_THRESHOLD:
+                    if rms < silence_level:
                         silence_counter += len(data) / SAMPLE_RATE
                     else:
                         silence_counter = 0
