@@ -109,9 +109,9 @@ def main():
 
     # Main loop
     try:
-        # Fixed thresholds — no calibration needed
-        speech_start = 0.05  # Start recording when RMS exceeds this
-        silence_level = 0.02  # Stop recording when RMS drops below this
+        # Fixed thresholds
+        speech_start = 0.03  # Start recording when RMS exceeds this (lowered to catch more speech)
+        silence_level = 0.015  # Stop recording when RMS drops below this
 
         emit("wake")  # Ready to listen immediately
 
