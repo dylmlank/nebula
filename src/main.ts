@@ -192,7 +192,6 @@ let systemState: any = null;
 async function pollSystemState() {
   try { systemState = await invoke("get_system_state"); } catch {}
 }
-setInterval(pollSystemState, 5000); // Poll every 5s
 
 function renderHUD(): string {
   if (!systemState) return '<div class="hud-bar"><span class="hud-item">SYSTEM OFFLINE</span></div>';
@@ -442,4 +441,11 @@ function applyTheme() { document.documentElement.setAttribute("data-theme", them
 
 // ── Init ──
 applyTheme();
-loadConversations().then(() => render());
+render(); // Render immediately with empty state
+// Then load data async
+(async () => {
+  try { await loadConversations(); } catch {}
+  try { await pollSystemState(); } catch {}
+  render();
+  setInterval(pollSystemState, 5000);
+})();
