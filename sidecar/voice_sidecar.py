@@ -63,7 +63,7 @@ def main():
     CHANNELS = 1
     SPEECH_THRESHOLD = 0.08  # RMS to start recording
     SILENCE_THRESHOLD = 0.03  # RMS for silence detection
-    SILENCE_DURATION = 1.0  # seconds of silence to end recording
+    SILENCE_DURATION = 0.6  # seconds of silence to end recording (snappy cutoff)
 
     should_quit = False
     jarvis_speaking = [False]
