@@ -42,26 +42,19 @@ def main():
         return
 
     try:
-        from vosk import Model, KaldiRecognizer
+        from faster_whisper import WhisperModel
     except ImportError:
-        emit("error", message="Install vosk: pip install vosk")
+        emit("error", message="Install faster-whisper: pip install faster-whisper")
         return
 
     try:
         import noisereduce as nr
     except ImportError:
-        nr = None  # Optional — works without it
+        nr = None
 
-    # Load Vosk model
+    # Load Whisper small model (accurate transcription)
     emit("status", message="Loading speech model...")
-    model_path = os.path.expanduser("~/.local/share/vosk/vosk-model-small-en-us-0.15")
-    if not os.path.isdir(model_path):
-        emit("error", message=f"Vosk model not found at {model_path}")
-        return
-
-    model = Model(model_path)
-    recognizer = KaldiRecognizer(model, 16000)
-    recognizer.SetWords(True)
+    model = WhisperModel("small", device="cpu", compute_type="int8")
 
     emit("ready")
 
@@ -107,10 +100,10 @@ def main():
             continue
 
         # Poll for speech
-        chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
+        chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
         sd.wait()
 
-        rms = np.sqrt(np.mean((chunk.astype(np.float32) / 32768.0) ** 2))
+        rms = np.sqrt(np.mean(chunk ** 2))
 
         if rms < SPEECH_THRESHOLD:
             continue
@@ -124,11 +117,11 @@ def main():
             if is_jarvis_speaking():
                 break
 
-            part = sd.rec(int(SAMPLE_RATE * 0.2), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
+            part = sd.rec(int(SAMPLE_RATE * 0.2), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
             sd.wait()
             audio_parts.append(part)
 
-            part_rms = np.sqrt(np.mean((part.astype(np.float32) / 32768.0) ** 2))
+            part_rms = np.sqrt(np.mean(part ** 2))
             if part_rms < SILENCE_THRESHOLD:
                 silence_counter += 0.2
             else:
@@ -148,17 +141,13 @@ def main():
         # Apply noise reduction if available
         if nr is not None:
             try:
-                audio_float = audio.astype(np.float32) / 32768.0
-                cleaned = nr.reduce_noise(y=audio_float, sr=SAMPLE_RATE, stationary=True, prop_decrease=0.8)
-                audio = (cleaned * 32768.0).astype(np.int16)
+                audio = nr.reduce_noise(y=audio, sr=SAMPLE_RATE, stationary=True, prop_decrease=0.8)
             except:
-                pass  # Use raw audio if noise reduction fails
+                pass
 
-        # Transcribe with Vosk
-        recognizer.Reset()
-        recognizer.AcceptWaveform(audio.tobytes())
-        result = json.loads(recognizer.FinalResult())
-        text = result.get("text", "").strip()
+        # Transcribe with Whisper small (accurate)
+        segments, _ = model.transcribe(audio, language="en", beam_size=3, vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments).strip()
 
         if text and len(text) > 1:
             text_lower = text.lower()
