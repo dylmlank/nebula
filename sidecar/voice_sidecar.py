@@ -61,8 +61,8 @@ def main():
     # Config
     SAMPLE_RATE = 16000
     CHANNELS = 1
-    SPEECH_THRESHOLD = 0.08  # RMS to start recording
-    SILENCE_THRESHOLD = 0.03  # RMS for silence detection
+    SPEECH_THRESHOLD = 0.02  # RMS to start recording (lowered for quiet mics)
+    SILENCE_THRESHOLD = 0.008  # RMS for silence detection
     SILENCE_DURATION = 0.6  # seconds of silence to end recording (snappy cutoff)
 
     should_quit = False
@@ -90,6 +90,13 @@ def main():
 
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
     stdin_thread.start()
+
+    # Ensure mic is unmuted on start (safety — in case stale mute from crash)
+    import subprocess
+    subprocess.run(["pactl", "set-source-mute", "@DEFAULT_SOURCE@", "0"], capture_output=True)
+    # Clear stale speaking flag
+    if os.path.exists("/tmp/jarvis_speaking"):
+        os.remove("/tmp/jarvis_speaking")
 
     emit("wake")
 
