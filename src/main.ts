@@ -284,9 +284,10 @@ function renderInput(): string {
     <div class="quick-actions">
       <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">Clipboard</button>
       <button class="qa-btn" data-qa="sysinfo" title="System info">System</button>
+      <button class="qa-btn" data-qa="screen" title="Analyze screen">Screen</button>
+      <button class="qa-btn" data-qa="webcam" title="Webcam snapshot">Webcam</button>
       <button class="qa-btn" data-qa="note" title="Quick note">Note</button>
       <button class="qa-btn" data-qa="search" title="Search vault">Vault</button>
-      <button class="qa-btn" data-qa="calendar" title="Calendar">Calendar</button>
     </div>
     <div class="input-bar">
       <textarea id="chat-input" placeholder="Message JARVIS..." ${isStreaming ? "disabled" : ""}></textarea>
@@ -376,9 +377,10 @@ function attachListeners() {
     const qa = (el as HTMLElement).dataset.qa!;
     if (qa === "clipboard") sendMessage("What's on my clipboard? [TOOL:clipboard action=get]");
     else if (qa === "sysinfo") sendMessage("Give me a system status report");
+    else if (qa === "screen") sendMessage("Take a screenshot and tell me what's on my screen [TOOL:analyze_screen]");
+    else if (qa === "webcam") sendMessage("Take a webcam snapshot and describe what you see [TOOL:vision_snapshot]");
     else if (qa === "note") { const note = prompt("Quick note:"); if (note) sendMessage(`Save this note: ${note}`); }
     else if (qa === "search") { currentPanel = "vault"; render(); }
-    else if (qa === "calendar") sendMessage("What's on my calendar today?");
   }));
 
   // Theme

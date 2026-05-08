@@ -1583,6 +1583,56 @@ pub fn vision_snapshot(args: &HashMap<String, String>) -> String {
     }
 }
 
+pub fn screenshot(args: &HashMap<String, String>) -> String {
+    let output_path = "/tmp/jarvis_screenshot.png";
+
+    // Try grim (Wayland), then scrot (X11), then import (ImageMagick)
+    let result = Command::new("grim").arg(output_path).output()
+        .or_else(|_| Command::new("scrot").arg(output_path).output())
+        .or_else(|_| Command::new("import").args(["-window", "root", output_path]).output());
+
+    match result {
+        Ok(output) if output.status.success() => {
+            format!("Screenshot saved to {}", output_path)
+        }
+        _ => "Failed to capture screenshot. No screenshot tool available.".into(),
+    }
+}
+
+pub fn analyze_screen(args: &HashMap<String, String>) -> String {
+    let prompt = args.get("prompt").cloned().unwrap_or_else(|| "Describe what's on this screen. What applications are open? What is the user working on?".into());
+    let screenshot_path = "/tmp/jarvis_screenshot.png";
+
+    // Capture screenshot first
+    let cap_result = Command::new("grim").arg(screenshot_path).output()
+        .or_else(|_| Command::new("scrot").arg(screenshot_path).output())
+        .or_else(|_| Command::new("import").args(["-window", "root", screenshot_path]).output());
+
+    match cap_result {
+        Ok(output) if output.status.success() => {}
+        _ => return "Failed to capture screen.".into(),
+    }
+
+    // Send to Claude Vision via Python sidecar
+    let sidecar = dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/analyze_image.py");
+    match Command::new("python3")
+        .arg(&sidecar)
+        .arg(screenshot_path)
+        .arg(&prompt)
+        .output()
+    {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if out.is_empty() {
+                "Could not analyze screenshot.".into()
+            } else {
+                out
+            }
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -1640,6 +1690,8 @@ impl ToolRegistry {
             "security_audit" => security_audit(args),
             "configure_workspace" => configure_workspace(args),
             "vision_snapshot" => vision_snapshot(args),
+            "screenshot" => screenshot(args),
+            "analyze_screen" => analyze_screen(args),
             _ => self.run_custom_tool(name, args),
         }
     }
