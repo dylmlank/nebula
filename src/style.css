@@ -40,20 +40,42 @@
 html, body { height: 100%; overflow: hidden; font-family: var(--font); background: var(--bg); color: var(--text); }
 #app { height: 100%; }
 
+/* Scanline overlay */
+.layout::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,229,255,0.015) 2px, rgba(0,229,255,0.015) 4px);
+  z-index: 9999;
+}
+
 /* Layout */
-.layout { display: flex; height: 100vh; }
+.layout { display: flex; height: 100vh; position: relative; }
 
 /* Sidebar */
 .sidebar {
-  width: 260px;
+  width: 240px;
   background: var(--bg2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   transition: width var(--transition), opacity var(--transition);
   overflow: hidden;
+  position: relative;
+}
+.sidebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(to bottom, transparent, var(--accent), transparent);
+  opacity: 0.3;
 }
 .sidebar.closed { width: 0; border-right: none; }
+.sidebar.closed::after { display: none; }
 
 .sidebar-header {
   padding: 14px;
@@ -62,17 +84,19 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 
 .sidebar-new {
   width: 100%;
-  padding: 10px;
-  background: var(--accent-glow);
+  padding: 9px;
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
   cursor: pointer;
   transition: all var(--transition);
 }
-.sidebar-new:hover { background: var(--accent); color: white; border-color: var(--accent); }
+.sidebar-new:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); box-shadow: var(--glow); }
 
 .sidebar-list {
   flex: 1;
@@ -86,17 +110,18 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background var(--transition);
+  transition: all var(--transition);
   margin-bottom: 2px;
+  border: 1px solid transparent;
 }
-.sidebar-item:hover { background: var(--surface); }
-.sidebar-item.active { background: var(--accent-glow); border: 1px solid var(--border); }
+.sidebar-item:hover { background: var(--surface); border-color: var(--border); }
+.sidebar-item.active { background: var(--accent-glow); border-color: var(--accent-dim); }
 
 .sidebar-title {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -155,17 +180,19 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 
 .nav-tab {
   background: none;
-  border: none;
+  border: 1px solid transparent;
   color: var(--muted);
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
   cursor: pointer;
   transition: all var(--transition);
 }
-.nav-tab:hover { color: var(--text); background: var(--surface); }
-.nav-tab.active { color: var(--accent); background: var(--accent-glow); box-shadow: var(--glow); }
+.nav-tab:hover { color: var(--text); border-color: var(--border); }
+.nav-tab.active { color: var(--accent); background: var(--accent-glow); box-shadow: var(--glow); border-color: var(--accent-dim); }
 
 .btn-icon {
   background: none;
@@ -217,12 +244,12 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 .message.user .msg-label { color: var(--accent); }
 
 .msg-body { word-wrap: break-word; }
-.msg-body code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 12.5px; }
+.msg-body code { background: var(--bg); padding: 2px 5px; border-radius: 3px; font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
 .msg-body pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin: 8px 0; overflow-x: auto; }
 .msg-body pre code { background: none; padding: 0; font-size: 12px; line-height: 1.5; }
 .msg-body strong { font-weight: 600; }
 .msg-body li { margin-left: 16px; list-style: none; }
-.msg-body li::before { content: "•"; color: var(--accent); margin-right: 8px; }
+.msg-body li::before { content: "▹"; color: var(--accent-dim); margin-right: 6px; }
 .code-lang { display: block; color: var(--muted); font-size: 10px; margin-bottom: 4px; }
 
 /* Welcome */
@@ -231,18 +258,19 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 .welcome-sub { font-size: 12px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; }
 @keyframes glowPulse { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
 
-/* Thinking dots */
-.dots::after { content: "•••"; animation: pulse 1.5s infinite; letter-spacing: 2px; }
-@keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+/* Thinking */
+.dots::after { content: "▮"; animation: blink 0.8s step-end infinite; color: var(--accent); }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
 /* Tool cards */
 .tool-area { margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
 .tool-card {
   background: var(--bg);
   border: 1px solid var(--border);
+  border-left: 2px solid var(--accent-dim);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  font-size: 11px;
+  padding: 5px 9px;
+  font-size: 10px;
   font-family: var(--mono);
   color: var(--muted);
 }
@@ -254,7 +282,8 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 /* Input footer */
-.input-footer { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
+.input-footer { padding: 10px 14px; border-top: 1px solid var(--border); background: var(--bg2); position: relative; }
+.input-footer::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(to right, transparent, var(--accent), transparent); opacity: 0.15; }
 
 .quick-actions {
   display: flex;
@@ -279,14 +308,14 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
   flex: 1;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
   color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
+  font-family: var(--mono);
+  font-size: 12px;
   resize: none;
-  min-height: 44px;
-  max-height: 160px;
+  min-height: 40px;
+  max-height: 140px;
   outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
@@ -295,13 +324,13 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 #chat-input:disabled { opacity: 0.4; }
 
 .btn-send {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  font-size: 16px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   transition: all var(--transition);
@@ -309,7 +338,7 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
   align-items: center;
   justify-content: center;
 }
-.btn-send:hover { background: var(--accent-dim); transform: scale(1.05); box-shadow: var(--glow); }
+.btn-send:hover { background: var(--accent); color: var(--bg); box-shadow: var(--glow); }
 .btn-send:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
 
 /* Panel content (vault, settings) */
@@ -362,18 +391,19 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 .hud-bar {
   display: flex;
   gap: 14px;
-  padding: 4px 16px;
+  padding: 5px 16px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   font-size: 9px;
   font-family: var(--mono);
   color: var(--muted);
   letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 .hud-item { display: flex; align-items: center; gap: 4px; }
-.hud-val { color: var(--accent); font-weight: 600; }
+.hud-val { color: var(--accent); font-weight: 700; }
 .hud-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
-.hud-dot.on { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
+.hud-dot.on { background: #00e676; box-shadow: 0 0 6px #00e676; }
 
 /* hljs */
 .hljs { color: var(--text); }
