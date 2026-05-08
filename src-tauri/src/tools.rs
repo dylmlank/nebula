@@ -1633,6 +1633,212 @@ pub fn analyze_screen(args: &HashMap<String, String>) -> String {
     }
 }
 
+// ─── Productivity Tools ───
+
+pub fn timer(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "start".into());
+    let minutes = args.get("minutes").or(args.get("duration")).and_then(|m| m.parse::<u32>().ok()).unwrap_or(25);
+    let label = args.get("label").cloned().unwrap_or_else(|| "Timer".into());
+
+    match action.as_str() {
+        "start" => {
+            // Run timer in background, notify when done
+            let cmd = format!(
+                "nohup sh -c 'sleep {} && notify-send \"JARVIS Timer\" \"{}\" && paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null' >/dev/null 2>&1 &",
+                minutes * 60, format!("{} — {} minutes complete", label, minutes)
+            );
+            let _ = Command::new("sh").arg("-c").arg(&cmd).spawn();
+            format!("Timer set: {} minutes ({}). I will notify you when it is done, sir.", minutes, label)
+        }
+        "pomodoro" => {
+            let cmd = "nohup sh -c 'sleep 1500 && notify-send \"JARVIS\" \"Pomodoro complete. Take a 5 minute break, sir.\" && paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null' >/dev/null 2>&1 &";
+            let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
+            "Pomodoro started: 25 minutes of focus. I will alert you when it is time for a break, sir.".into()
+        }
+        "cancel" => {
+            let _ = Command::new("pkill").args(["-f", "sleep.*notify-send.*Timer"]).output();
+            "All timers cancelled.".into()
+        }
+        _ => "Actions: start (minutes=N label=X), pomodoro, cancel".into(),
+    }
+}
+
+pub fn weather(args: &HashMap<String, String>) -> String {
+    let location = args.get("location").cloned().unwrap_or_default();
+
+    let url = if location.is_empty() {
+        "https://wttr.in/?format=%C+%t+%h+%w".to_string()
+    } else {
+        format!("https://wttr.in/{}?format=%C+%t+%h+%w", urlencoding::encode(&location))
+    };
+
+    match Command::new("curl").args(["-s", "-m", "5", &url]).output() {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if out.is_empty() || out.contains("Unknown") {
+                "Could not fetch weather.".into()
+            } else {
+                format!("Weather: {}", out)
+            }
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+pub fn todo(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "list".into());
+    let item = args.get("item").or(args.get("task")).cloned().unwrap_or_default();
+
+    let todo_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Documents/vault/JARVIS/memory/todos.md");
+
+    match action.as_str() {
+        "add" => {
+            if item.is_empty() { return "Error: need item".into(); }
+            let existing = fs::read_to_string(&todo_path).unwrap_or_default();
+            let new_content = format!("{}- [ ] {}\n", existing, item);
+            let _ = fs::write(&todo_path, new_content);
+            format!("Added: {}", item)
+        }
+        "done" | "complete" => {
+            if item.is_empty() { return "Error: need item text to mark done".into(); }
+            let content = fs::read_to_string(&todo_path).unwrap_or_default();
+            let new_content = content.replace(
+                &format!("- [ ] {}", item),
+                &format!("- [x] {}", item)
+            );
+            let _ = fs::write(&todo_path, new_content);
+            format!("Completed: {}", item)
+        }
+        "remove" | "delete" => {
+            if item.is_empty() { return "Error: need item".into(); }
+            let content = fs::read_to_string(&todo_path).unwrap_or_default();
+            let new_content: String = content.lines()
+                .filter(|l| !l.contains(&item))
+                .collect::<Vec<_>>()
+                .join("\n") + "\n";
+            let _ = fs::write(&todo_path, new_content);
+            format!("Removed: {}", item)
+        }
+        "clear" => {
+            let content = fs::read_to_string(&todo_path).unwrap_or_default();
+            let new_content: String = content.lines()
+                .filter(|l| !l.contains("[x]"))
+                .collect::<Vec<_>>()
+                .join("\n") + "\n";
+            let _ = fs::write(&todo_path, new_content);
+            "Cleared completed items.".into()
+        }
+        _ => {
+            // list
+            let content = fs::read_to_string(&todo_path).unwrap_or_default();
+            let todos: Vec<&str> = content.lines().filter(|l| l.contains("- [")).collect();
+            if todos.is_empty() {
+                "No todos. Add with: todo action=add item=...".into()
+            } else {
+                format!("Todos:\n{}", todos.join("\n"))
+            }
+        }
+    }
+}
+
+pub fn spotify(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "status".into());
+
+    match action.as_str() {
+        "play" | "resume" => {
+            let _ = Command::new("playerctl").args(["play"]).output();
+            "Playing.".into()
+        }
+        "pause" | "stop" => {
+            let _ = Command::new("playerctl").args(["pause"]).output();
+            "Paused.".into()
+        }
+        "next" | "skip" => {
+            let _ = Command::new("playerctl").args(["next"]).output();
+            "Skipped.".into()
+        }
+        "prev" | "previous" | "back" => {
+            let _ = Command::new("playerctl").args(["previous"]).output();
+            "Previous track.".into()
+        }
+        "volume" => {
+            let level = args.get("level").cloned().unwrap_or_else(|| "50".into());
+            let vol = format!("{}%", level.trim_end_matches('%'));
+            let _ = Command::new("playerctl").args(["volume", &format!("0.{}", level.trim_end_matches('%'))]).output();
+            format!("Volume set to {}.", vol)
+        }
+        _ => {
+            // status / now playing
+            match Command::new("playerctl").args(["metadata", "--format", "{{artist}} - {{title}} ({{status}})"]).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() || out.contains("No players found") {
+                        "No music playing.".into()
+                    } else {
+                        format!("Now playing: {}", out)
+                    }
+                }
+                Err(_) => "playerctl not available. Install: sudo apt install playerctl".into(),
+            }
+        }
+    }
+}
+
+pub fn file_manager(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "list".into());
+    let path = args.get("path").cloned().unwrap_or_else(|| "~".into());
+    let expanded = shellexpand::tilde(&path);
+
+    match action.as_str() {
+        "open" => {
+            let _ = Command::new("xdg-open").arg(expanded.as_ref()).spawn();
+            format!("Opened: {}", path)
+        }
+        "size" => {
+            match Command::new("du").args(["-sh", expanded.as_ref()]).output() {
+                Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "recent" => {
+            match Command::new("sh").arg("-c")
+                .arg(format!("find {} -maxdepth 2 -type f -mmin -60 -printf '%T+ %p\\n' 2>/dev/null | sort -r | head -10", expanded))
+                .output()
+            {
+                Ok(o) => {
+                    let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if out.is_empty() { "No recently modified files.".into() } else { format!("Recent files:\n{}", out) }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "trash" => {
+            let target = args.get("file").cloned().unwrap_or_default();
+            if target.is_empty() { return "Error: need file".into(); }
+            let expanded_target = shellexpand::tilde(&target);
+            match Command::new("gio").args(["trash", expanded_target.as_ref()]).output() {
+                Ok(o) if o.status.success() => format!("Trashed: {}", target),
+                _ => {
+                    // Fallback: move to ~/.local/share/Trash
+                    let trash_dir = dirs::home_dir().unwrap_or_default().join(".local/share/Trash/files");
+                    let _ = fs::create_dir_all(&trash_dir);
+                    let filename = std::path::Path::new(expanded_target.as_ref()).file_name().unwrap_or_default().to_string_lossy().to_string();
+                    match fs::rename(expanded_target.as_ref(), trash_dir.join(&filename)) {
+                        Ok(_) => format!("Trashed: {}", target),
+                        Err(e) => format!("Error: {}", e),
+                    }
+                }
+            }
+        }
+        _ => {
+            // list
+            list_files(args)
+        }
+    }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -1692,6 +1898,11 @@ impl ToolRegistry {
             "vision_snapshot" => vision_snapshot(args),
             "screenshot" => screenshot(args),
             "analyze_screen" => analyze_screen(args),
+            "timer" => timer(args),
+            "weather" => weather(args),
+            "todo" => todo(args),
+            "spotify" => spotify(args),
+            "file_manager" => file_manager(args),
             _ => self.run_custom_tool(name, args),
         }
     }

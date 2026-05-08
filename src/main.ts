@@ -61,6 +61,18 @@ listen<string>("chat-done", () => {
   }
 });
 
+// System alerts from proactive monitor
+listen<{type: string, message: string}>("system-alert", (e) => {
+  const alert = e.payload;
+  // Show as a notification toast
+  const toast = document.createElement("div");
+  toast.className = "toast-alert";
+  toast.innerHTML = `<span class="toast-icon">⚠</span> ${alert.message}`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add("show"), 10);
+  setTimeout(() => { toast.classList.remove("show"); setTimeout(() => toast.remove(), 300); }, 5000);
+});
+
 // Voice mode events from Python sidecar
 listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) => {
   const ev = e.payload;
@@ -298,9 +310,9 @@ function renderInput(): string {
 
 function renderVoiceMode(): string {
   const stateText = {
-    idle: "Say \"Hey JARVIS\" to begin",
+    idle: "Ready — start speaking",
     wake: "Listening...",
-    listening: "Recording your voice...",
+    listening: "Recording...",
     processing: "Processing...",
   }[voiceState] || "Idle";
 

@@ -312,6 +312,39 @@ fn main() {
             // Start file watcher for auto-reindex
             vault.start_watcher();
 
+            // Proactive system monitor — alerts on high CPU/RAM/disk
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    let state = observer::gather_system_state();
+
+                    // Alert on high memory
+                    if state.hardware.memory_percent > 90.0 {
+                        let _ = app_handle.emit("system-alert", serde_json::json!({
+                            "type": "warning",
+                            "message": format!("High memory usage: {:.0}%", state.hardware.memory_percent)
+                        }));
+                    }
+
+                    // Alert on low disk
+                    if state.hardware.disk_free_gb < 5.0 {
+                        let _ = app_handle.emit("system-alert", serde_json::json!({
+                            "type": "warning",
+                            "message": format!("Low disk space: {:.1}GB free", state.hardware.disk_free_gb)
+                        }));
+                    }
+
+                    // Alert on high CPU sustained
+                    if state.hardware.cpu_usage > 95.0 {
+                        let _ = app_handle.emit("system-alert", serde_json::json!({
+                            "type": "warning",
+                            "message": format!("High CPU: {:.0}%", state.hardware.cpu_usage)
+                        }));
+                    }
+                }
+            });
+
             app.manage(state);
             Ok(())
         })
