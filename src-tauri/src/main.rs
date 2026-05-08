@@ -210,7 +210,6 @@ async fn stop_speaking() -> Result<(), String> {
     let _ = std::process::Command::new("pkill").args(["-f", "aplay"]).output();
     Ok(())
 }
-}
 
 #[tauri::command]
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {

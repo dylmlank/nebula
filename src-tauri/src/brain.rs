@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::tools::{parse_tool_calls, ToolRegistry};
 use crate::vault::VaultIndex;
 
-const SYSTEM_PROMPT: &str = "You are JARVIS, an autonomous AI agent. Address the user as \"sir\". Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
+const SYSTEM_PROMPT: &str = "You are JARVIS, an agentic AI system. Address the user as \"sir\". You observe the environment and act autonomously. Analyze the gap between current state and user goal, then execute tools to close it. Be proactive — mention relevant system info. No markdown. Plain text. Be concise.\n\nTOOLS: [TOOL:name arg=value]\nAvailable: run_command, sudo, read_file, write_file, list_files, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, system_info, remember, knowledge_search, knowledge_save, recall, git, find_files, replace_in_file, processes, kill_process, network, bluetooth, service, security_audit, configure_workspace, vision_snapshot, calendar";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -296,7 +296,13 @@ impl Brain {
             .map(|v| v.get_context())
             .unwrap_or_default();
 
+        // Get system state snapshot (quick — non-blocking summary)
+        let sys_state = self.get_quick_system_state();
+
         let mut dynamic_parts = Vec::new();
+        if !sys_state.is_empty() {
+            dynamic_parts.push(format!("Environment:\n{}", sys_state));
+        }
         if !memory_ctx.is_empty() {
             dynamic_parts.push(format!("Memory:\n{}", memory_ctx));
         }
@@ -314,6 +320,34 @@ impl Brain {
                 "text": dynamic_parts.join("\n\n")
             }
         ])
+    }
+
+    fn get_quick_system_state(&self) -> String {
+        // Quick system info without the full sysinfo overhead
+        let mut parts = Vec::new();
+
+        // Active window
+        if let Ok(output) = std::process::Command::new("sh").arg("-c")
+            .arg("xdotool getactivewindow getwindowname 2>/dev/null")
+            .output() {
+            let win = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !win.is_empty() && win != "unknown" {
+                parts.push(format!("Active: {}", &win[..win.len().min(40)]));
+            }
+        }
+
+        // Quick memory check
+        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            for line in content.lines() {
+                if line.starts_with("MemAvailable:") {
+                    let kb: u64 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    parts.push(format!("RAM free: {}GB", kb / 1_048_576));
+                    break;
+                }
+            }
+        }
+
+        parts.join(" | ")
     }
 
     fn build_messages(&self) -> Vec<Value> {
