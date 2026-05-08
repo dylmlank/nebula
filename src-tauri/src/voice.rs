@@ -83,6 +83,11 @@ fn speech_worker_loop(
             continue;
         }
 
+        // Mute mic while speaking (prevent picking up own voice)
+        let _ = Command::new("pactl")
+            .args(["set-source-mute", "@DEFAULT_SOURCE@", "1"])
+            .output();
+
         // Spawn piper | aplay pipeline — zero latency, streams directly
         let piper = Command::new(PIPER_BIN)
             .args([
@@ -125,6 +130,11 @@ fn speech_worker_loop(
         // Wait for aplay to finish
         let _ = aplay.wait();
         let _ = piper.wait();
+
+        // Unmute mic after speaking
+        let _ = Command::new("pactl")
+            .args(["set-source-mute", "@DEFAULT_SOURCE@", "0"])
+            .output();
     }
 }
 

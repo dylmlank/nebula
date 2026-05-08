@@ -63,6 +63,7 @@ def main():
 
     audio_queue = queue.Queue()
     should_quit = False
+    jarvis_is_speaking = [False]  # mutable in closure
 
     def detect_wake_word(audio_data: np.ndarray) -> bool:
         """Check if audio contains the wake word using Whisper."""
@@ -102,6 +103,10 @@ def main():
             if cmd == "quit":
                 should_quit = True
                 break
+            elif cmd == "speaking":
+                jarvis_is_speaking[0] = True
+            elif cmd == "done_speaking":
+                jarvis_is_speaking[0] = False
 
     # Start stdin reader thread
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
@@ -116,6 +121,11 @@ def main():
         emit("wake")  # Ready to listen immediately
 
         while not should_quit:
+            # Skip listening while JARVIS is speaking (avoid picking up own voice)
+            if jarvis_is_speaking[0]:
+                time.sleep(0.1)
+                continue
+
             # Wait for speech — record short chunks and check level
             chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
             sd.wait()
