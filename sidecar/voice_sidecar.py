@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""JARVIS Voice Sidecar — Wake word detection + Whisper STT.
+"""JARVIS Voice Sidecar — Vosk STT + noise reduction.
 
-Runs continuously, listens for "jarvis" wake word, then transcribes speech.
-Outputs JSON lines to stdout for the Tauri app to consume.
+Uses Vosk for fast streaming speech recognition (much better for conversation)
+and noisereduce for cleaning up audio before recognition.
 
-Protocol (stdout JSON lines):
-  {"type": "ready"}                     — sidecar initialized
-  {"type": "wake"}                      — wake word detected, now listening
-  {"type": "listening"}                 — actively recording user speech
-  {"type": "transcript", "text": "..."}  — speech transcribed, ready to process
-  {"type": "error", "message": "..."}   — error occurred
+Protocol (stdout JSON):
+  {"type": "ready"}
+  {"type": "wake"}        — ready to listen
+  {"type": "listening"}   — recording speech
+  {"type": "transcript", "text": "..."} — speech transcribed
+  {"type": "interrupt"}   — user interrupted JARVIS
+  {"type": "resume"}      — user said resume/continue
+  {"type": "status", "message": "..."} — loading status
+  {"type": "error", "message": "..."} — error
 
-Protocol (stdin lines):
-  "stop"     — stop current recording
-  "quit"     — shutdown sidecar
+Protocol (stdin):
+  "quit" — shutdown
+  "speaking" — JARVIS is talking (pause listening)
+  "done_speaking" — JARVIS stopped (resume listening)
 """
 
 import json
@@ -22,15 +26,11 @@ import os
 import time
 import threading
 import numpy as np
-import queue
-
-# Suppress warnings
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 def emit(event_type: str, **kwargs):
-    """Send event to Tauri app."""
     data = {"type": event_type, **kwargs}
     print(json.dumps(data), flush=True)
+
 
 def main():
     emit("status", message="Starting voice engine...")
@@ -42,61 +42,41 @@ def main():
         return
 
     try:
-        emit("status", message="Loading speech model (first time takes ~5s)...")
-        from faster_whisper import WhisperModel
+        from vosk import Model, KaldiRecognizer
     except ImportError:
-        emit("error", message="Install faster-whisper: pip install faster-whisper")
+        emit("error", message="Install vosk: pip install vosk")
         return
 
-    # Load Whisper model (tiny for speed — wake word doesn't need accuracy)
-    model = WhisperModel("tiny", device="cpu", compute_type="int8")
+    try:
+        import noisereduce as nr
+    except ImportError:
+        nr = None  # Optional — works without it
+
+    # Load Vosk model
+    emit("status", message="Loading speech model...")
+    model_path = os.path.expanduser("~/.local/share/vosk/vosk-model-small-en-us-0.15")
+    if not os.path.isdir(model_path):
+        emit("error", message=f"Vosk model not found at {model_path}")
+        return
+
+    model = Model(model_path)
+    recognizer = KaldiRecognizer(model, 16000)
+    recognizer.SetWords(True)
+
     emit("ready")
 
-    # Audio config
+    # Config
     SAMPLE_RATE = 16000
     CHANNELS = 1
-    BLOCK_SIZE = 1024
-    SPEECH_THRESHOLD = 0.04  # RMS level that indicates actual speech (not just noise)
-    SILENCE_THRESHOLD = 0.015  # Below this = silence (for end-of-speech detection)
-    SILENCE_DURATION = 1.0  # seconds of silence to stop recording (fast cutoff)
-    WAKE_WORDS = ["jarvis", "hey jarvis", "yo jarvis", "okay jarvis"]
+    SPEECH_THRESHOLD = 0.08  # RMS to start recording
+    SILENCE_THRESHOLD = 0.03  # RMS for silence detection
+    SILENCE_DURATION = 1.0  # seconds of silence to end recording
 
-    audio_queue = queue.Queue()
     should_quit = False
-    jarvis_is_speaking = [False]  # mutable in closure
-
-    def detect_wake_word(audio_data: np.ndarray) -> bool:
-        """Check if audio contains the wake word using Whisper."""
-        # Only process if there's speech-level audio (not just ambient noise)
-        rms = np.sqrt(np.mean(audio_data ** 2))
-        if rms < SPEECH_THRESHOLD:
-            return False
-
-        # Transcribe with tiny model
-        segments, _ = model.transcribe(
-            audio_data.flatten().astype(np.float32),
-            language="en",
-            vad_filter=True,
-            beam_size=1,
-        )
-
-        text = " ".join(s.text.lower().strip() for s in segments)
-        if text:
-            emit("status", message=f"Heard: {text[:30]}")
-        return any(wake in text for wake in WAKE_WORDS)
-
-    def transcribe_speech(audio_data: np.ndarray) -> str:
-        """Transcribe full speech — fast mode."""
-        segments, _ = model.transcribe(
-            audio_data.flatten().astype(np.float32),
-            language="en",
-            vad_filter=True,
-            beam_size=1,
-        )
-        return " ".join(s.text.strip() for s in segments).strip()
+    jarvis_speaking = [False]
+    SPEAKING_FLAG = "/tmp/jarvis_speaking"
 
     def stdin_reader():
-        """Read commands from Tauri app."""
         nonlocal should_quit
         for line in sys.stdin:
             cmd = line.strip().lower()
@@ -104,78 +84,92 @@ def main():
                 should_quit = True
                 break
             elif cmd == "speaking":
-                jarvis_is_speaking[0] = True
+                jarvis_speaking[0] = True
             elif cmd == "done_speaking":
-                jarvis_is_speaking[0] = False
+                jarvis_speaking[0] = False
 
-    # Start stdin reader thread
+    def is_jarvis_speaking():
+        """Check both stdin flag and file flag."""
+        if jarvis_speaking[0]:
+            return True
+        # File-based signal (set by Rust voice engine)
+        return os.path.exists(SPEAKING_FLAG)
+
     stdin_thread = threading.Thread(target=stdin_reader, daemon=True)
     stdin_thread.start()
 
-    # Main loop
-    try:
-        # Fixed thresholds
-        speech_start = 0.10  # High threshold — only deliberate speech triggers recording
-        silence_level = 0.04  # Stop recording when RMS drops below this
+    emit("wake")
 
-        emit("wake")  # Ready to listen immediately
+    while not should_quit:
+        # Skip while JARVIS is speaking
+        if is_jarvis_speaking():
+            time.sleep(0.1)
+            continue
 
-        while not should_quit:
-            # Skip listening while JARVIS is speaking (avoid picking up own voice)
-            if jarvis_is_speaking[0]:
-                time.sleep(0.1)
-                continue
+        # Poll for speech
+        chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
+        sd.wait()
 
-            # Wait for speech — record short chunks and check level
-            chunk = sd.rec(int(SAMPLE_RATE * 0.3), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+        rms = np.sqrt(np.mean((chunk.astype(np.float32) / 32768.0) ** 2))
+
+        if rms < SPEECH_THRESHOLD:
+            continue
+
+        # Speech detected — record full utterance
+        emit("listening")
+        audio_parts = [chunk]
+        silence_counter = 0
+
+        while silence_counter < SILENCE_DURATION:
+            if is_jarvis_speaking():
+                break
+
+            part = sd.rec(int(SAMPLE_RATE * 0.2), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='int16')
             sd.wait()
-            rms = np.sqrt(np.mean(chunk ** 2))
+            audio_parts.append(part)
 
-            if rms < speech_start:
-                continue  # Still silence, keep waiting
+            part_rms = np.sqrt(np.mean((part.astype(np.float32) / 32768.0) ** 2))
+            if part_rms < SILENCE_THRESHOLD:
+                silence_counter += 0.2
+            else:
+                silence_counter = 0
 
-            # Speech detected — record until silence
-            emit("listening")
-            speech_parts = [chunk]
-            silence_counter = 0
+            # Max 30s
+            if sum(len(p) for p in audio_parts) / SAMPLE_RATE > 30:
+                break
 
-            while silence_counter < SILENCE_DURATION:
-                part = sd.rec(int(SAMPLE_RATE * 0.2), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
-                sd.wait()
-                part_rms = np.sqrt(np.mean(part ** 2))
-                speech_parts.append(part)
-
-                if part_rms < silence_level:
-                    silence_counter += 0.2
-                else:
-                    silence_counter = 0
-
-                # Max 30s
-                if sum(len(p) for p in speech_parts) / SAMPLE_RATE > 30:
-                    break
-
-            # Transcribe
-            audio_data = np.concatenate(speech_parts)
-            text = transcribe_speech(audio_data)
-
-            if text and len(text) > 1:
-                # Check if user is interrupting (said something while JARVIS was talking)
-                text_lower = text.lower().strip()
-                if text_lower in ("resume", "continue", "go on", "keep going"):
-                    emit("resume")
-                else:
-                    # Any other speech = interrupt JARVIS, then send transcript
-                    emit("interrupt")
-                    time.sleep(0.1)  # Let interrupt propagate
-                    emit("transcript", text=text)
-
-            # Ready for next utterance
+        if is_jarvis_speaking():
             emit("wake")
+            continue
 
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        emit("error", message=str(e))
+        # Combine audio
+        audio = np.concatenate(audio_parts).flatten()
+
+        # Apply noise reduction if available
+        if nr is not None:
+            try:
+                audio_float = audio.astype(np.float32) / 32768.0
+                cleaned = nr.reduce_noise(y=audio_float, sr=SAMPLE_RATE, stationary=True, prop_decrease=0.8)
+                audio = (cleaned * 32768.0).astype(np.int16)
+            except:
+                pass  # Use raw audio if noise reduction fails
+
+        # Transcribe with Vosk
+        recognizer.Reset()
+        recognizer.AcceptWaveform(audio.tobytes())
+        result = json.loads(recognizer.FinalResult())
+        text = result.get("text", "").strip()
+
+        if text and len(text) > 1:
+            text_lower = text.lower()
+            if text_lower in ("resume", "continue", "go on", "keep going"):
+                emit("resume")
+            else:
+                emit("interrupt")
+                time.sleep(0.05)
+                emit("transcript", text=text)
+
+        emit("wake")
 
 
 if __name__ == "__main__":
