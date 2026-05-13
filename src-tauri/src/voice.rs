@@ -87,7 +87,7 @@ fn speech_worker_loop(
         let _ = Command::new("pactl")
             .args(["set-source-mute", "@DEFAULT_SOURCE@", "1"])
             .output();
-        let _ = std::fs::write("/tmp/jarvis_speaking", "1");
+        let _ = std::fs::write("/tmp/nebula_speaking", "1");
 
         // Spawn piper | aplay pipeline — zero latency, streams directly
         let piper = Command::new(PIPER_BIN)
@@ -133,7 +133,7 @@ fn speech_worker_loop(
         let _ = piper.wait();
 
         // Unmute mic and clear signal after speaking
-        let _ = std::fs::remove_file("/tmp/jarvis_speaking");
+        let _ = std::fs::remove_file("/tmp/nebula_speaking");
         let _ = Command::new("pactl")
             .args(["set-source-mute", "@DEFAULT_SOURCE@", "0"])
             .output();

@@ -256,7 +256,7 @@ pub fn web_fetch(args: &HashMap<String, String>) -> String {
     }
 
     let result = Command::new("curl")
-        .args(["-sL", "-m", "10", "-A", "JARVIS/3.0", &url])
+        .args(["-sL", "-m", "10", "-A", "Nebula/3.0", &url])
         .output();
 
     match result {
@@ -338,7 +338,7 @@ pub fn clipboard(args: &HashMap<String, String>) -> String {
 }
 
 pub fn notify(args: &HashMap<String, String>) -> String {
-    let title = args.get("title").cloned().unwrap_or_else(|| "JARVIS".into());
+    let title = args.get("title").cloned().unwrap_or_else(|| "Nebula".into());
     let message = args.get("message").cloned().unwrap_or_default();
 
     if message.is_empty() {
@@ -903,7 +903,7 @@ pub fn google_search(args: &HashMap<String, String>) -> String {
     // Try Google Custom Search API first (if configured)
     let config_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/config.json");
+        .join("nebula/config.json");
 
     if let Ok(content) = fs::read_to_string(&config_path) {
         if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -956,7 +956,7 @@ pub fn calendar(args: &HashMap<String, String>) -> String {
     // Load token
     let token_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/google_token.json");
+        .join("nebula/google_token.json");
 
     let access_token = match fs::read_to_string(&token_path) {
         Ok(content) => {
@@ -1067,10 +1067,10 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
 
     let config_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/config.json");
+        .join("nebula/config.json");
     let token_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/google_token.json");
+        .join("nebula/google_token.json");
 
     let config_content = fs::read_to_string(&config_path).unwrap_or_default();
     let config: serde_json::Value = serde_json::from_str(&config_content).unwrap_or_default();
@@ -1113,7 +1113,7 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
 
                         // Save device code for polling
                         let pending = serde_json::json!({"device_code": device_code, "client_id": client_id, "client_secret": client_secret});
-                        let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+                        let pending_path = dirs::config_dir().unwrap_or_default().join("nebula/google_pending.json");
                         let _ = fs::write(&pending_path, pending.to_string());
 
                         format!("Go to {} and enter code: {}\n\nThen tell me to run: [TOOL:calendar_auth action=poll]", verification_url, user_code)
@@ -1125,7 +1125,7 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
             }
         }
         "poll" => {
-            let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+            let pending_path = dirs::config_dir().unwrap_or_default().join("nebula/google_pending.json");
             let pending_content = match fs::read_to_string(&pending_path) {
                 Ok(c) => c,
                 Err(_) => return "No pending auth. Run calendar_auth action=start first.".into(),
@@ -1584,7 +1584,7 @@ pub fn vision_snapshot(args: &HashMap<String, String>) -> String {
 }
 
 pub fn screenshot(args: &HashMap<String, String>) -> String {
-    let output_path = "/tmp/jarvis_screenshot.png";
+    let output_path = "/tmp/nebula_screenshot.png";
 
     // Try grim (Wayland), then scrot (X11), then import (ImageMagick)
     let result = Command::new("grim").arg(output_path).output()
@@ -1601,7 +1601,7 @@ pub fn screenshot(args: &HashMap<String, String>) -> String {
 
 pub fn analyze_screen(args: &HashMap<String, String>) -> String {
     let prompt = args.get("prompt").cloned().unwrap_or_else(|| "Describe what's on this screen. What applications are open? What is the user working on?".into());
-    let screenshot_path = "/tmp/jarvis_screenshot.png";
+    let screenshot_path = "/tmp/nebula_screenshot.png";
 
     // Capture screenshot first
     let cap_result = Command::new("grim").arg(screenshot_path).output()
@@ -1648,12 +1648,12 @@ pub fn timer(args: &HashMap<String, String>) -> String {
                 minutes * 60, format!("{} — {} minutes complete", label, minutes)
             );
             let _ = Command::new("sh").arg("-c").arg(&cmd).spawn();
-            format!("Timer set: {} minutes ({}). I will notify you when it is done, sir.", minutes, label)
+            format!("Timer set: {} minutes ({}). I will notify you when it is done.", minutes, label)
         }
         "pomodoro" => {
-            let cmd = "nohup sh -c 'sleep 1500 && notify-send \"JARVIS\" \"Pomodoro complete. Take a 5 minute break, sir.\" && paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null' >/dev/null 2>&1 &";
+            let cmd = "nohup sh -c 'sleep 1500 && notify-send \"JARVIS\" \"Pomodoro complete. Take a 5 minute break.\" && paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null' >/dev/null 2>&1 &";
             let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
-            "Pomodoro started: 25 minutes of focus. I will alert you when it is time for a break, sir.".into()
+            "Pomodoro started: 25 minutes of focus. I will alert you when it is time for a break.".into()
         }
         "cancel" => {
             let _ = Command::new("pkill").args(["-f", "sleep.*notify-send.*Timer"]).output();

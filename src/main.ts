@@ -287,8 +287,29 @@ function renderChat(): string {
     const tools = m.tools?.length ? `<div class="tool-area">${m.tools.map(t => `<div class="tool-card"><span class="tool-done">✓</span> <span class="tool-name">${t.name}</span> <span class="tool-args">${t.args.replace(/</g, "&lt;")}</span>${t.result ? `<div class="tool-res">${t.result.replace(/</g, "&lt;").slice(0, 120)}</div>` : ""}</div>`).join("")}</div>` : "";
     return `<div class="message ${cls} anim-in"><div class="msg-label">${label}</div>${tools}<div class="msg-body">${body}</div></div>`;
   }).join("");
-  const thinking = isStreaming && !streamBuffer ? '<div class="message assistant anim-in"><div class="msg-label">JARVIS</div><div class="msg-body"><span class="dots"></span></div></div>' : "";
-  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? '<div class="welcome"><div class="welcome-title">Nebula</div><div class="welcome-sub">Neural Engine for Bookkeeping, Understanding, Language & Automation</div></div>' : ""}${msgs}${thinking}</div>`;
+  const thinking = isStreaming && !streamBuffer ? '<div class="message assistant anim-in"><div class="msg-label">Nebula</div><div class="msg-body"><span class="dots"></span></div></div>' : "";
+  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? `<div class="welcome">
+    <div class="welcome-title">Nebula</div>
+    <div class="welcome-sub">Neural Engine for Bookkeeping, Understanding, Language & Automation</div>
+    <div class="welcome-shortcuts">
+      <div class="welcome-shortcut" data-shortcut="What's on my screen?">
+        <div class="welcome-shortcut-icon">🖥</div>
+        <div class="welcome-shortcut-label">Screen</div>
+      </div>
+      <div class="welcome-shortcut" data-shortcut="What's the weather like?">
+        <div class="welcome-shortcut-icon">☀️</div>
+        <div class="welcome-shortcut-label">Weather</div>
+      </div>
+      <div class="welcome-shortcut" data-shortcut="Search my vault for recent notes">
+        <div class="welcome-shortcut-icon">📝</div>
+        <div class="welcome-shortcut-label">Vault</div>
+      </div>
+      <div class="welcome-shortcut" data-shortcut="Give me a system status report">
+        <div class="welcome-shortcut-icon">💻</div>
+        <div class="welcome-shortcut-label">System</div>
+      </div>
+    </div>
+  </div>` : ""}${msgs}${thinking}</div>`;
 }
 
 function renderInput(): string {
@@ -428,6 +449,11 @@ function attachListeners() {
     if (e.ctrlKey && e.key === "k") { e.preventDefault(); currentPanel = "vault"; render(); }
     if (e.ctrlKey && e.key === "n") { e.preventDefault(); newChat(); }
   });
+
+  // Welcome shortcuts
+  document.querySelectorAll("[data-shortcut]").forEach(el => el.addEventListener("click", () => {
+    sendMessage((el as HTMLElement).dataset.shortcut!);
+  }));
 }
 
 // ── Settings load/save ──

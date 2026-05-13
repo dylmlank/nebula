@@ -215,7 +215,7 @@ async fn stop_speaking() -> Result<(), String> {
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/conversations");
+        .join("nebula/conversations");
     let _ = std::fs::create_dir_all(&convos_dir);
 
     let mut convos = Vec::new();
@@ -245,7 +245,7 @@ async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
 async fn save_conversation(id: String, data: serde_json::Value) -> Result<(), String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/conversations");
+        .join("nebula/conversations");
     let _ = std::fs::create_dir_all(&convos_dir);
     let path = convos_dir.join(format!("{}.json", id));
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
@@ -379,5 +379,5 @@ fn main() {
             get_system_state,
         ])
         .run(tauri::generate_context!())
-        .expect("error running JARVIS");
+        .expect("error running Nebula");
 }

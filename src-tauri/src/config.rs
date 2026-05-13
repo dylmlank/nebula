@@ -78,7 +78,7 @@ impl Config {
     pub fn config_path() -> PathBuf {
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("jarvis");
+            .join("nebula");
         config_dir.join("config.json")
     }
 
@@ -101,7 +101,7 @@ impl Config {
         if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
             config.base_url = url;
         }
-        if let Ok(vault) = std::env::var("JARVIS_VAULT") {
+        if let Ok(vault) = std::env::var("NEBULA_VAULT") {
             config.vault_path = vault;
         }
 
