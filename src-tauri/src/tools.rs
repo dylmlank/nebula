@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use chrono::{Local, Utc};
+use chrono::Local;
 
 /// Parse [TOOL:name key=value] calls from LLM output
 pub fn parse_tool_calls(text: &str) -> Vec<(String, HashMap<String, String>)> {
@@ -65,6 +65,7 @@ fn parse_args(args_str: &str) -> HashMap<String, String> {
     result
 }
 
+#[allow(dead_code)]
 /// Strip tool tokens from text (for display/TTS)
 pub fn strip_tool_tokens(text: &str) -> String {
     let tool_re = Regex::new(r"\[TOOL:\w+.*?\]").unwrap();
@@ -1567,7 +1568,7 @@ pub fn configure_workspace(args: &HashMap<String, String>) -> String {
 }
 
 pub fn vision_snapshot(args: &HashMap<String, String>) -> String {
-    let prompt = args.get("prompt").cloned().unwrap_or_else(|| "Describe what you see on the desk. List all objects.".into());
+    let _prompt = args.get("prompt").cloned().unwrap_or_else(|| "Describe what you see on the desk. List all objects.".into());
     let sidecar = dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/vision.py");
 
     match Command::new("python3").arg(&sidecar).output() {
@@ -1583,7 +1584,7 @@ pub fn vision_snapshot(args: &HashMap<String, String>) -> String {
     }
 }
 
-pub fn screenshot(args: &HashMap<String, String>) -> String {
+pub fn screenshot(_args: &HashMap<String, String>) -> String {
     let output_path = "/tmp/nebula_screenshot.png";
 
     // Try grim (Wayland), then scrot (X11), then import (ImageMagick)
@@ -2129,6 +2130,7 @@ impl ToolRegistry {
             Err(e) => format!("Error: {}", e),
         }
     }
+    #[allow(dead_code)]
 
     pub fn list_names(&self) -> Vec<String> {
         let mut names = vec![

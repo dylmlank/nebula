@@ -292,6 +292,7 @@ impl VaultIndex {
         parts.join("\n\n")
     }
 
+    #[allow(dead_code)]
     /// Recall relevant memories for a topic
     pub fn recall(&self, topic: &str, limit: usize) -> String {
         let results = self.search(topic, limit);

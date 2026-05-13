@@ -1,7 +1,7 @@
 //! System Observer — environment monitoring via sysinfo.
 
 use serde::{Deserialize, Serialize};
-use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, Networks, System, RefreshKind};
+use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, System, RefreshKind};
 use std::collections::HashMap;
 use std::process::Command;
 

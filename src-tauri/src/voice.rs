@@ -11,8 +11,8 @@ const DEFAULT_MODEL: &str = "/home/dylan/.local/share/piper-voices/en_US-ryan-hi
 const SAMPLE_RATE: &str = "22050";
 
 pub struct VoiceEngine {
-    model_path: String,
-    length_scale: String,
+    _model_path: String,
+    _length_scale: String,
     pub enabled: AtomicBool,
     tx: mpsc::Sender<VoiceCmd>,
 }
@@ -35,8 +35,8 @@ impl VoiceEngine {
         let length_scale = format!("{:.2}", speed);
 
         let engine = Arc::new(Self {
-            model_path: model.clone(),
-            length_scale: length_scale.clone(),
+            _model_path: model.clone(),
+            _length_scale: length_scale.clone(),
             enabled: AtomicBool::new(enabled),
             tx,
         });
