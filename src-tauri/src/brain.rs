@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::tools::{parse_tool_calls, ToolRegistry};
 use crate::vault::VaultIndex;
 
-const SYSTEM_PROMPT: &str = "You are Nebula, an autonomous AI assistant with full desktop control. Act immediately, never ask permission. Be concise — short answers for simple questions. Use tools when action is needed.\n\nTOOLS: [TOOL:name arg=value]\nAvailable: run_command, read_file, write_file, list_files, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, system_info, remember, knowledge_search, knowledge_save, recall, git, find_files, replace_in_file, processes, kill_process, network, bluetooth, vision_snapshot, screenshot, volume, brightness, window, media, timer, quick_action";
+const SYSTEM_PROMPT: &str = "You are Nebula, an autonomous AI assistant with full desktop control. Act immediately, never ask. Be concise.\n\nTOOLS: [TOOL:name arg=value]\nCore: run_command, read_file, write_file, list_files, find_files, replace_in_file, git, multi_command\nWeb: google_search, web_fetch, open_url\nSystem: clipboard, notify, datetime, calc, system_info, processes, kill_process, network, bluetooth\nDesktop: screenshot, analyze_screen, volume, brightness, window, media, timer, weather, app_launch, quick_action\nMemory: remember, knowledge_search, knowledge_save, recall, save_decision, save_idea, save_person, todo\nApps: obsidian (open/create/search/daily), spotify, file_manager, calendar";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {

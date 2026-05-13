@@ -1786,6 +1786,157 @@ pub fn spotify(args: &HashMap<String, String>) -> String {
     }
 }
 
+// ─── Everyday App Integration ───
+
+pub fn app_launch(args: &HashMap<String, String>) -> String {
+    let app = args.get("app").or(args.get("name")).cloned().unwrap_or_default();
+    if app.is_empty() {
+        return "Error: need app name. Examples: discord, chrome, code, obsidian, firefox, files".into();
+    }
+
+    let (cmd, app_args) = match app.to_lowercase().as_str() {
+        "discord" => ("flatpak", vec!["run", "com.discordapp.Discord"]),
+        "chrome" | "google chrome" => ("flatpak", vec!["run", "com.google.Chrome"]),
+        "code" | "vscode" | "vs code" => ("flatpak", vec!["run", "com.visualstudio.code"]),
+        "obsidian" => ("flatpak", vec!["run", "md.obsidian.Obsidian"]),
+        "firefox" => ("firefox", vec![]),
+        "files" | "nautilus" => ("nautilus", vec!["."]),
+        "terminal" | "term" => ("gnome-terminal", vec![]),
+        "settings" => ("gnome-control-center", vec![]),
+        _ => {
+            // Try as a direct command
+            match Command::new(&app).spawn() {
+                Ok(_) => return format!("Launched: {}", app),
+                Err(_) => {
+                    // Try flatpak search
+                    match Command::new("flatpak").args(["run", &app]).spawn() {
+                        Ok(_) => return format!("Launched via flatpak: {}", app),
+                        Err(_) => return format!("Could not find app: {}. Try: discord, chrome, code, obsidian, firefox, files, terminal, settings", app),
+                    }
+                }
+            }
+        }
+    };
+
+    match Command::new(cmd).args(&app_args).spawn() {
+        Ok(_) => format!("Launched: {}", app),
+        Err(e) => format!("Error launching {}: {}", app, e),
+    }
+}
+
+pub fn obsidian(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_else(|| "open".into());
+    let vault_path = dirs::home_dir().unwrap_or_default().join("Documents/vault/JARVIS");
+
+    match action.as_str() {
+        "open" => {
+            // Open Obsidian to a specific note
+            let note = args.get("note").or(args.get("path")).cloned().unwrap_or_default();
+            if note.is_empty() {
+                // Just open Obsidian
+                let _ = Command::new("flatpak").args(["run", "md.obsidian.Obsidian"]).spawn();
+                return "Opened Obsidian".into();
+            }
+            // Find the note
+            let note_path = if note.ends_with(".md") {
+                vault_path.join(&note)
+            } else {
+                vault_path.join(format!("{}.md", note))
+            };
+            if note_path.exists() {
+                // Open via obsidian URI scheme
+                let uri = format!("obsidian://open?vault=JARVIS&file={}", urlencoding::encode(&note));
+                let _ = Command::new("xdg-open").arg(&uri).spawn();
+                format!("Opened note: {}", note)
+            } else {
+                format!("Note not found: {}. Try a path relative to vault root.", note)
+            }
+        }
+        "create" => {
+            let title = args.get("title").cloned().unwrap_or_else(|| "Untitled".into());
+            let content = args.get("content").cloned().unwrap_or_default();
+            let safe_title = title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+            let path = vault_path.join(format!("{}.md", safe_title));
+
+            let today = Local::now().format("%Y-%m-%d").to_string();
+            let note = format!("---\ntags: [note]\ndate: {}\n---\n\n# {}\n\n{}\n", today, title, content);
+
+            match std::fs::write(&path, &note) {
+                Ok(_) => format!("Created note: {}", safe_title),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "search" => {
+            let query = args.get("query").cloned().unwrap_or_default();
+            if query.is_empty() { return "Error: need query".into(); }
+            // Grep vault
+            match Command::new("grep").args(["-rl", "-i", &query]).arg(&vault_path).output() {
+                Ok(output) => {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if out.is_empty() { "No matching notes.".into() }
+                    else {
+                        let files: Vec<&str> = out.lines().take(10).collect();
+                        format!("Notes matching '{}':\n{}", query, files.join("\n"))
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+        "daily" => {
+            // Create/open today's daily note
+            let today = Local::now().format("%Y-%m-%d").to_string();
+            let path = vault_path.join(format!("logs/{}.md", today));
+            if !path.exists() {
+                let content = format!("---\ntags: [daily, log]\ndate: {}\n---\n\n# {}\n\n## Tasks\n\n- [ ] \n\n## Notes\n\n", today, today);
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")));
+                let _ = std::fs::write(&path, content);
+            }
+            let uri = format!("obsidian://open?vault=JARVIS&file=logs/{}", today);
+            let _ = Command::new("xdg-open").arg(&uri).spawn();
+            format!("Opened daily note: {}", today)
+        }
+        _ => "Actions: open (note=name), create (title, content), search (query), daily".into(),
+    }
+}
+
+pub fn quick_action(args: &HashMap<String, String>) -> String {
+    let action = args.get("action").cloned().unwrap_or_default();
+
+    match action.as_str() {
+        "focus" | "dnd" => {
+            let _ = Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "1"]).output();
+            let _ = Command::new("gsettings").args(["set", "org.gnome.desktop.notifications", "show-banners", "false"]).output();
+            "Focus mode: muted, notifications off".into()
+        }
+        "unfocus" | "normal" => {
+            let _ = Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "0"]).output();
+            let _ = Command::new("gsettings").args(["set", "org.gnome.desktop.notifications", "show-banners", "true"]).output();
+            "Normal mode: unmuted, notifications on".into()
+        }
+        "loud" => {
+            let _ = Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "0"]).output();
+            let _ = Command::new("pactl").args(["set-sink-volume", "@DEFAULT_SINK@", "80%"]).output();
+            "Volume: 80%".into()
+        }
+        "quiet" => {
+            let _ = Command::new("pactl").args(["set-sink-volume", "@DEFAULT_SINK@", "30%"]).output();
+            "Volume: 30%".into()
+        }
+        "goodnight" => {
+            let _ = Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "1"]).output();
+            let _ = Command::new("loginctl").arg("lock-session").output();
+            "Goodnight: muted + locked".into()
+        }
+        "wakeup" => {
+            let _ = Command::new("pactl").args(["set-sink-mute", "@DEFAULT_SINK@", "0"]).output();
+            let _ = Command::new("pactl").args(["set-sink-volume", "@DEFAULT_SINK@", "50%"]).output();
+            let _ = Command::new("gsettings").args(["set", "org.gnome.desktop.notifications", "show-banners", "true"]).output();
+            "Good morning: volume 50%, notifications on".into()
+        }
+        _ => "Actions: focus, unfocus, loud, quiet, goodnight, wakeup".into(),
+    }
+}
+
 pub fn file_manager(args: &HashMap<String, String>) -> String {
     let action = args.get("action").cloned().unwrap_or_else(|| "list".into());
     let path = args.get("path").cloned().unwrap_or_else(|| "~".into());
@@ -1903,6 +2054,9 @@ impl ToolRegistry {
             "todo" => todo(args),
             "spotify" => spotify(args),
             "file_manager" => file_manager(args),
+            "app_launch" | "launch" | "open_app" => app_launch(args),
+            "obsidian" => obsidian(args),
+            "quick_action" => quick_action(args),
             _ => self.run_custom_tool(name, args),
         }
     }
