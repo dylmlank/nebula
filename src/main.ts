@@ -189,7 +189,7 @@ function updateStreamingBubble() {
   const chatArea = document.getElementById("chat-area");
   if (!chatArea) return;
   let bubble = document.getElementById("streaming-bubble");
-  if (!bubble) { bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">JARVIS</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
+  if (!bubble) { bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">Nebula</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
   const body = bubble.querySelector(".msg-body");
   if (body) body.innerHTML = md(stripToolTokens(streamBuffer));
   chatArea.scrollTop = chatArea.scrollHeight;
@@ -254,7 +254,7 @@ function render() {
         <header class="topbar">
           <div class="topbar-left">
             <button class="btn-toggle-sidebar" id="btn-sidebar">${sidebarOpen ? "◀" : "☰"}</button>
-            <div class="topbar-title">JARVIS</div>
+            <div class="topbar-title">Nebula</div>
             <nav class="topbar-nav">
               <button class="nav-tab ${currentPanel === "chat" ? "active" : ""}" data-panel="chat">Chat</button>
               <button class="nav-tab ${currentPanel === "voice" ? "active" : ""}" data-panel="voice">Voice</button>
@@ -282,13 +282,13 @@ function render() {
 function renderChat(): string {
   const msgs = messages.map(m => {
     const cls = m.role === "user" ? "user" : "assistant";
-    const label = m.role === "user" ? "YOU" : "JARVIS";
+    const label = m.role === "user" ? "You" : "Nebula";
     const body = m.role === "user" ? m.content.replace(/</g, "&lt;").replace(/\n/g, "<br>") : md(stripToolTokens(m.content));
     const tools = m.tools?.length ? `<div class="tool-area">${m.tools.map(t => `<div class="tool-card"><span class="tool-done">✓</span> <span class="tool-name">${t.name}</span> <span class="tool-args">${t.args.replace(/</g, "&lt;")}</span>${t.result ? `<div class="tool-res">${t.result.replace(/</g, "&lt;").slice(0, 120)}</div>` : ""}</div>`).join("")}</div>` : "";
     return `<div class="message ${cls} anim-in"><div class="msg-label">${label}</div>${tools}<div class="msg-body">${body}</div></div>`;
   }).join("");
   const thinking = isStreaming && !streamBuffer ? '<div class="message assistant anim-in"><div class="msg-label">JARVIS</div><div class="msg-body"><span class="dots"></span></div></div>' : "";
-  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? '<div class="welcome"><div class="welcome-title">JARVIS</div><div class="welcome-sub">At your service, sir.</div></div>' : ""}${msgs}${thinking}</div>`;
+  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? '<div class="welcome"><div class="welcome-title">Nebula</div><div class="welcome-sub">Neural Engine for Bookkeeping, Understanding, Language & Automation</div></div>' : ""}${msgs}${thinking}</div>`;
 }
 
 function renderInput(): string {
@@ -302,7 +302,7 @@ function renderInput(): string {
       <button class="qa-btn" data-qa="search" title="Search vault">Vault</button>
     </div>
     <div class="input-bar">
-      <textarea id="chat-input" placeholder="Message JARVIS..." ${isStreaming ? "disabled" : ""}></textarea>
+      <textarea id="chat-input" placeholder="Ask Nebula anything..." ${isStreaming ? "disabled" : ""}></textarea>
       <button class="btn-send" id="btn-send" ${isStreaming ? "disabled" : ""}>↑</button>
     </div>
   </footer>`;
@@ -336,7 +336,7 @@ function renderVoiceMode(): string {
       }
     </div>
     <div class="voice-info">
-      <p>Wake words: "Hey JARVIS", "JARVIS", "Yo JARVIS"</p>
+      <p>Wake words: "Hey Nebula", "Nebula", "Yo Nebula"</p>
       <p>Uses Whisper for speech recognition • Piper for TTS response</p>
     </div>
   </div>`;

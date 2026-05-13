@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::tools::{parse_tool_calls, ToolRegistry};
 use crate::vault::VaultIndex;
 
-const SYSTEM_PROMPT: &str = "You are JARVIS, an agentic AI system. Address the user as \"sir\". You observe the environment and act autonomously. Analyze the gap between current state and user goal, then execute tools to close it. Be proactive — mention relevant system info. No markdown. Plain text. Be concise.\n\nTOOLS: [TOOL:name arg=value]\nAvailable: run_command, sudo, read_file, write_file, list_files, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, system_info, remember, knowledge_search, knowledge_save, recall, git, find_files, replace_in_file, processes, kill_process, network, bluetooth, service, security_audit, configure_workspace, vision_snapshot, calendar";
+const SYSTEM_PROMPT: &str = "You are Nebula, an autonomous AI assistant with full desktop control. Act immediately, never ask permission. Be concise — short answers for simple questions. Use tools when action is needed.\n\nTOOLS: [TOOL:name arg=value]\nAvailable: run_command, read_file, write_file, list_files, google_search, web_fetch, clipboard, notify, open_url, datetime, calc, system_info, remember, knowledge_search, knowledge_save, recall, git, find_files, replace_in_file, processes, kill_process, network, bluetooth, vision_snapshot, screenshot, volume, brightness, window, media, timer, quick_action";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -403,7 +403,7 @@ impl Brain {
         let log_file = logs_dir.join(format!("{}.md", today));
 
         let entry = format!(
-            "\n---\n{}\nUser: {}\nJARVIS: {}\n",
+            "\n---\n{}\nUser: {}\nNebula: {}\n",
             timestamp,
             &user_msg[..user_msg.len().min(300)],
             &assistant_msg[..assistant_msg.len().min(800)],
