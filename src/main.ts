@@ -30,7 +30,17 @@ let sidebarOpen = localStorage.getItem("jarvis-sidebar") !== "closed";
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // ── Events ──
-listen<string>("chat-token", (e) => { streamBuffer += e.payload; updateStreamingBubble(); });
+let tokenBatchTimer: number | null = null;
+listen<string>("chat-token", (e) => {
+  streamBuffer += e.payload;
+  // Batch token updates — only render every 30ms for smoothness
+  if (!tokenBatchTimer) {
+    tokenBatchTimer = window.setTimeout(() => {
+      updateStreamingBubble();
+      tokenBatchTimer = null;
+    }, 30);
+  }
+});
 listen<{name: string, args: string}>("tool-start", (e) => { activeTool = { name: e.payload.name, args: e.payload.args, status: "running" }; toolHistory.push(activeTool); updateToolDisplay(); });
 listen<{name: string, result: string}>("tool-result", (e) => { if (activeTool) { activeTool.result = e.payload.result; activeTool.status = "done"; activeTool = null; } updateToolDisplay(); });
 listen<string>("chat-done", () => {

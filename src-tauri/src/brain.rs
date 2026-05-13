@@ -24,6 +24,8 @@ pub struct Brain {
     config: Config,
     tools: ToolRegistry,
     vault: Option<std::sync::Arc<VaultIndex>>,
+    cached_sys_state: String,
+    cached_sys_time: std::time::Instant,
 }
 
 impl Brain {
@@ -34,6 +36,8 @@ impl Brain {
             tools: ToolRegistry::new(),
             vault: None,
             config,
+            cached_sys_state: String::new(),
+            cached_sys_time: std::time::Instant::now(),
         }
     }
 
@@ -121,8 +125,8 @@ impl Brain {
             });
 
             let result = self.tools.execute(name, args);
-            let short = if result.len() > 200 {
-                format!("{}...", &result[..200])
+            let short = if result.len() > 300 {
+                format!("{}...", &result[..300])
             } else {
                 result.clone()
             };
@@ -132,7 +136,14 @@ impl Brain {
                 result: short,
             });
 
-            all_results.push(format!("[{}]: {}", name, &result[..result.len().min(500)]));
+            // Higher limits for content-heavy tools
+            let max_len = match name.as_str() {
+                "screenshot" | "analyze_screen" | "web_fetch" | "google_search"
+                | "read_file" | "knowledge_search" | "recall" | "run_command"
+                | "find_files" | "obsidian" => 2000,
+                _ => 800,
+            };
+            all_results.push(format!("[{}]: {}", name, &result[..result.len().min(max_len)]));
         }
 
         if all_results.is_empty() && created.is_empty() {
@@ -230,7 +241,7 @@ impl Brain {
 
         let status = response.status();
         if status.as_u16() == 429 {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             return Err("Rate limited".into());
         }
         if !status.is_success() {
@@ -286,7 +297,7 @@ impl Brain {
         Ok(full_response)
     }
 
-    fn build_system(&self) -> Value {
+    fn build_system(&mut self) -> Value {
         let date = Local::now().format("%Y-%m-%d %H:%M").to_string();
 
         // Get memory context from vault
@@ -322,8 +333,12 @@ impl Brain {
         ])
     }
 
-    fn get_quick_system_state(&self) -> String {
-        // Quick system info without the full sysinfo overhead
+    fn get_quick_system_state(&mut self) -> String {
+        // Cache for 5 seconds — avoid shelling out on every message
+        if self.cached_sys_time.elapsed().as_secs() < 5 && !self.cached_sys_state.is_empty() {
+            return self.cached_sys_state.clone();
+        }
+
         let mut parts = Vec::new();
 
         // Active window
@@ -347,7 +362,9 @@ impl Brain {
             }
         }
 
-        parts.join(" | ")
+        self.cached_sys_state = parts.join(" | ");
+        self.cached_sys_time = std::time::Instant::now();
+        self.cached_sys_state.clone()
     }
 
     fn build_messages(&self) -> Vec<Value> {

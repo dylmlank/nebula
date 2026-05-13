@@ -247,7 +247,9 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); backgroun
 .welcome-shortcut-icon { font-size: 20px; margin-bottom: 6px; }
 .welcome-shortcut-label { font-size: 12px; color: var(--text2); font-weight: 500; }
 
-/* ── Thinking dots ── */
+/* ── Streaming bubble ── */
+#streaming-bubble { transition: padding 0.1s ease; }
+#streaming-bubble .msg-body { min-height: 20px; }
 .dots { display: inline-flex; gap: 4px; }
 .dots::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: dotPulse 1.4s ease infinite; }
 .dots::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent2); animation: dotPulse 1.4s ease infinite 0.2s; }
