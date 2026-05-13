@@ -325,17 +325,18 @@ function renderChat(): string {
 function renderInput(): string {
   return `<footer class="input-footer">
     <div class="quick-actions">
-      <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">Clipboard</button>
-      <button class="qa-btn" data-qa="sysinfo" title="System info">System</button>
-      <button class="qa-btn" data-qa="screen" title="Analyze screen">Screen</button>
-      <button class="qa-btn" data-qa="webcam" title="Webcam snapshot">Webcam</button>
-      <button class="qa-btn" data-qa="note" title="Quick note">Note</button>
-      <button class="qa-btn" data-qa="search" title="Search vault">Vault</button>
+      <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">📋 Clipboard</button>
+      <button class="qa-btn" data-qa="sysinfo" title="System info">💻 System</button>
+      <button class="qa-btn" data-qa="screen" title="Analyze screen">🖥 Screen</button>
+      <button class="qa-btn" data-qa="weather" title="Weather">☀️ Weather</button>
+      <button class="qa-btn" data-qa="note" title="Quick note">📝 Note</button>
+      <button class="qa-btn" data-qa="search" title="Search vault">🔍 Vault</button>
     </div>
     <div class="input-bar">
       <textarea id="chat-input" placeholder="Ask Nebula anything..." ${isStreaming ? "disabled" : ""}></textarea>
       <button class="btn-send" id="btn-send" ${isStreaming ? "disabled" : ""}>↑</button>
     </div>
+    <div class="input-hint">Enter to send · Shift+Enter for newline · Ctrl+L clear · Ctrl+K vault</div>
   </footer>`;
 }
 
@@ -421,7 +422,7 @@ function attachListeners() {
     if (qa === "clipboard") sendMessage("What's on my clipboard? [TOOL:clipboard action=get]");
     else if (qa === "sysinfo") sendMessage("Give me a system status report");
     else if (qa === "screen") sendMessage("Take a screenshot and tell me what's on my screen [TOOL:analyze_screen]");
-    else if (qa === "webcam") sendMessage("Take a webcam snapshot and describe what you see [TOOL:vision_snapshot]");
+    else if (qa === "weather") sendMessage("What's the weather like? [TOOL:weather]");
     else if (qa === "note") { const note = prompt("Quick note:"); if (note) sendMessage(`Save this note: ${note}`); }
     else if (qa === "search") { currentPanel = "vault"; render(); }
   }));
