@@ -7,7 +7,7 @@ mod tools;
 mod vault;
 mod voice;
 
-use brain::{Brain, StreamEvent};
+use brain::{Brain, ImageData, StreamEvent};
 use config::Config;
 use vault::VaultIndex;
 use voice::VoiceEngine;
@@ -61,6 +61,86 @@ async fn send_message(
     });
 
     Ok("streaming".into())
+}
+
+#[tauri::command]
+async fn send_message_with_images(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    message: String,
+    images: Vec<ImageData>,
+) -> Result<String, String> {
+    let brain = state.brain.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+
+    let app_handle = app.clone();
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(token) => {
+                    let _ = app_handle.emit("chat-token", &token);
+                }
+                StreamEvent::ToolStart { name, args } => {
+                    let _ = app_handle.emit("tool-start", serde_json::json!({"name": name, "args": args}));
+                }
+                StreamEvent::ToolResult { name, result } => {
+                    let _ = app_handle.emit("tool-result", serde_json::json!({"name": name, "result": result}));
+                }
+                StreamEvent::Done(full) => {
+                    let _ = app_handle.emit("chat-done", &full);
+                }
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        let mut brain = brain.lock().await;
+        brain.chat_stream_with_images(&message, images, tx).await;
+    });
+
+    Ok("streaming".into())
+}
+
+#[tauri::command]
+async fn upload_file(name: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine;
+
+    let upload_dir = std::path::PathBuf::from("/tmp/nebula_uploads");
+    let _ = std::fs::create_dir_all(&upload_dir);
+
+    // Decode and save file
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("Base64 decode error: {}", e))?;
+
+    let file_path = upload_dir.join(&name);
+    std::fs::write(&file_path, &bytes).map_err(|e| format!("Write error: {}", e))?;
+
+    // Determine file type and extract
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    // For images, return base64 with mime type marker
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => {
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => "image/jpeg",
+            };
+            Ok(format!("IMAGE:{}:{}", mime, data_base64))
+        }
+        _ => {
+            // Use read_document tool for text extraction
+            let mut args = std::collections::HashMap::new();
+            args.insert("path".to_string(), file_path.to_string_lossy().to_string());
+            let result = tools::read_document(&args);
+            Ok(result)
+        }
+    }
 }
 
 #[tauri::command]
@@ -257,8 +337,10 @@ async fn save_conversation(id: String, data: serde_json::Value) -> Result<(), St
 async fn delete_conversation(id: String) -> Result<(), String> {
     let path = dirs::config_dir()
         .unwrap_or_default()
-        .join(format!("jarvis/conversations/{}.json", id));
-    let _ = std::fs::remove_file(&path);
+        .join(format!("nebula/conversations/{}.json", id));
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete: {}", e))?;
+    }
     Ok(())
 }
 
@@ -362,6 +444,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             send_message,
+            send_message_with_images,
+            upload_file,
             clear_history,
             get_config,
             save_config,

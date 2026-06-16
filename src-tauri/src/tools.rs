@@ -1991,6 +1991,217 @@ pub fn file_manager(args: &HashMap<String, String>) -> String {
     }
 }
 
+// ─── Document Reading Tools ───
+
+pub fn read_document(args: &HashMap<String, String>) -> String {
+    let path = args.get("path").cloned().unwrap_or_default();
+    if path.is_empty() {
+        return "Error: no path".into();
+    }
+
+    let expanded = shellexpand::tilde(&path);
+    let p = Path::new(expanded.as_ref());
+
+    if !p.is_file() {
+        return format!("Not found: {}", p.display());
+    }
+
+    let ext = p.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    let result = match ext.as_str() {
+        "pdf" => extract_pdf(p),
+        "docx" => extract_docx(p),
+        "xlsx" => extract_xlsx(p),
+        "pptx" => extract_pptx(p),
+        "doc" | "odt" | "rtf" => extract_with_libreoffice(p),
+        "xls" | "ods" => extract_with_libreoffice(p),
+        "ppt" | "odp" => extract_with_libreoffice(p),
+        "csv" | "tsv" => read_file(args),
+        "txt" | "md" | "json" | "toml" | "yaml" | "yml" | "xml" | "html" | "htm"
+        | "py" | "rs" | "js" | "ts" | "sh" | "c" | "cpp" | "h" | "java" | "go" => read_file(args),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => extract_image_base64(p),
+        _ => format!("Unsupported format: .{}", ext),
+    };
+
+    result
+}
+
+fn extract_pdf(path: &Path) -> String {
+    // Try pdftotext (poppler-utils)
+    match Command::new("pdftotext")
+        .args(["-layout", path.to_str().unwrap_or(""), "-"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.is_empty() {
+                "PDF has no extractable text (may be scanned/image-based).".into()
+            } else if text.len() > 12000 {
+                format!("{}...\n\n[Truncated — {} chars total]", &text[..12000], text.len())
+            } else {
+                text
+            }
+        }
+        _ => {
+            // Fallback: try python with PyMuPDF
+            match Command::new("python3")
+                .arg("-c")
+                .arg(format!(
+                    "import fitz; doc=fitz.open('{}'); print('\\n'.join(p.get_text() for p in doc))",
+                    path.display()
+                ))
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if text.len() > 12000 {
+                        format!("{}...\n\n[Truncated]", &text[..12000])
+                    } else {
+                        text
+                    }
+                }
+                _ => "Error: Install pdftotext (sudo apt install poppler-utils) or PyMuPDF (pip install pymupdf).".into(),
+            }
+        }
+    }
+}
+
+fn extract_docx(path: &Path) -> String {
+    // Try pandoc first
+    match Command::new("pandoc")
+        .args(["-t", "plain", "--wrap=none", path.to_str().unwrap_or("")])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.len() > 12000 {
+                format!("{}...\n\n[Truncated]", &text[..12000])
+            } else if text.is_empty() {
+                "Empty document.".into()
+            } else {
+                text
+            }
+        }
+        _ => {
+            // Fallback: python-docx
+            match Command::new("python3")
+                .arg("-c")
+                .arg(format!(
+                    "from docx import Document; d=Document('{}'); print('\\n'.join(p.text for p in d.paragraphs))",
+                    path.display()
+                ))
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if text.len() > 12000 { format!("{}...\n\n[Truncated]", &text[..12000]) } else { text }
+                }
+                _ => "Error: Install pandoc (sudo apt install pandoc) or python-docx (pip install python-docx).".into(),
+            }
+        }
+    }
+}
+
+fn extract_xlsx(path: &Path) -> String {
+    // Try python openpyxl
+    match Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            r#"
+import openpyxl
+wb = openpyxl.load_workbook('{}', data_only=True)
+for name in wb.sheetnames[:5]:
+    ws = wb[name]
+    print(f"=== {{name}} ===")
+    for row in list(ws.iter_rows(values_only=True))[:100]:
+        print('\t'.join(str(c) if c is not None else '' for c in row))
+    print()
+"#,
+            path.display()
+        ))
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.len() > 12000 { format!("{}...\n\n[Truncated]", &text[..12000]) } else { text }
+        }
+        _ => {
+            // Fallback: libreoffice convert to csv
+            extract_with_libreoffice(path)
+        }
+    }
+}
+
+fn extract_pptx(path: &Path) -> String {
+    match Command::new("python3")
+        .arg("-c")
+        .arg(format!(
+            r#"
+from pptx import Presentation
+prs = Presentation('{}')
+for i, slide in enumerate(prs.slides):
+    print(f"--- Slide {{i+1}} ---")
+    for shape in slide.shapes:
+        if hasattr(shape, "text") and shape.text.strip():
+            print(shape.text)
+    print()
+"#,
+            path.display()
+        ))
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.len() > 12000 { format!("{}...\n\n[Truncated]", &text[..12000]) } else { text }
+        }
+        _ => extract_with_libreoffice(path),
+    }
+}
+
+fn extract_with_libreoffice(path: &Path) -> String {
+    let tmp_dir = "/tmp/nebula_convert";
+    let _ = fs::create_dir_all(tmp_dir);
+
+    match Command::new("libreoffice")
+        .args(["--headless", "--convert-to", "txt:Text", "--outdir", tmp_dir, path.to_str().unwrap_or("")])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let txt_path = PathBuf::from(tmp_dir).join(format!("{}.txt", stem));
+            match fs::read_to_string(&txt_path) {
+                Ok(text) => {
+                    let _ = fs::remove_file(&txt_path);
+                    let text = text.trim().to_string();
+                    if text.len() > 12000 { format!("{}...\n\n[Truncated]", &text[..12000]) } else { text }
+                }
+                Err(_) => "Conversion succeeded but could not read output.".into(),
+            }
+        }
+        _ => "Error: Install LibreOffice (sudo apt install libreoffice) for this file type.".into(),
+    }
+}
+
+fn extract_image_base64(path: &Path) -> String {
+    match fs::read(path) {
+        Ok(bytes) => {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => "image/jpeg",
+            };
+            format!("IMAGE:{}:{}", mime, b64)
+        }
+        Err(e) => format!("Error reading image: {}", e),
+    }
+}
+
 // ─── Tool Registry ───
 
 pub struct ToolRegistry {
@@ -2058,6 +2269,7 @@ impl ToolRegistry {
             "app_launch" | "launch" | "open_app" => app_launch(args),
             "obsidian" => obsidian(args),
             "quick_action" => quick_action(args),
+            "read_document" => read_document(args),
             _ => self.run_custom_tool(name, args),
         }
     }

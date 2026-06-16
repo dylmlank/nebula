@@ -23,12 +23,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' https:; connect-src 'self' https: wss:; img-src 'self' data: https:; font-src 'self' https:"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: http://localhost:* http://ipc.localhost; connect-src 'self' https: wss: http://localhost:* http://ipc.localhost ipc:; img-src 'self' data: https:; font-src 'self' https: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http://localhost:*"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": ["deb"],
     "icon": ["icons/icon.png"],
     "linux": {
       "deb": {

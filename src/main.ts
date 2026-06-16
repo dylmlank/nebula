@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import hljs from "highlight.js";
+import "./style.css";
 
 // ── Types ──
 interface Message { id: string; role: "user" | "assistant"; content: string; tools?: ToolExec[]; }
@@ -26,6 +27,16 @@ let voiceTranscript = "";
 let voiceInitiatedMessage = false; // tracks if current message was from voice
 let currentConvoId = "";
 let sidebarOpen = localStorage.getItem("jarvis-sidebar") !== "closed";
+
+// ── Attachments ──
+interface Attachment {
+  name: string;
+  type: "image" | "document";
+  data: string; // base64 for images, extracted text for docs
+  mime?: string;
+  preview?: string; // data URL for image thumbnails
+}
+let pendingAttachments: Attachment[] = [];
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -118,10 +129,39 @@ listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) 
 // ── API ──
 async function sendMessage(text: string) {
   if (!text.trim() || isStreaming) return;
-  messages.push({ id: uid(), role: "user", content: text });
+
+  // Build message with attachments
+  let displayText = text;
+  let fullText = text;
+  const imageAttachments: {mime_type: string, data: string}[] = [];
+
+  if (pendingAttachments.length > 0) {
+    const docTexts: string[] = [];
+    for (const att of pendingAttachments) {
+      if (att.type === "image" && att.mime && att.data) {
+        imageAttachments.push({ mime_type: att.mime, data: att.data });
+        displayText = `[📎 ${att.name}] ${text}`;
+      } else if (att.type === "document") {
+        docTexts.push(`[Attached: ${att.name}]\n${att.data}`);
+        displayText = `[📎 ${att.name}] ${text}`;
+      }
+    }
+    if (docTexts.length > 0) {
+      fullText = docTexts.join("\n\n") + "\n\n" + text;
+    }
+    pendingAttachments = [];
+  }
+
+  messages.push({ id: uid(), role: "user", content: displayText });
   isStreaming = true; streamBuffer = ""; currentPanel = "chat"; render();
-  try { await invoke("send_message", { message: text }); }
-  catch (e) { messages.push({ id: uid(), role: "assistant", content: `Error: ${e}` }); isStreaming = false; render(); }
+
+  try {
+    if (imageAttachments.length > 0) {
+      await invoke("send_message_with_images", { message: fullText, images: imageAttachments });
+    } else {
+      await invoke("send_message", { message: fullText });
+    }
+  } catch (e) { messages.push({ id: uid(), role: "assistant", content: `Error: ${e}` }); isStreaming = false; render(); }
 }
 
 async function searchVault(query: string) {
@@ -129,6 +169,52 @@ async function searchVault(query: string) {
   vaultQuery = query;
   try { vaultResults = await invoke<VaultResult[]>("search_vault", { query }); } catch { vaultResults = []; }
   render();
+}
+
+// ── File Upload ──
+async function handleFileUpload(files: FileList) {
+  for (const file of Array.from(files)) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const arrayBuffer = reader.result as ArrayBuffer;
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const b64 = btoa(binary);
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+
+      if (imageExts.includes(ext)) {
+        // Image: store for vision API
+        const mime = file.type || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+        pendingAttachments.push({
+          name: file.name,
+          type: "image",
+          data: b64,
+          mime,
+          preview: `data:${mime};base64,${b64}`,
+        });
+        render();
+      } else {
+        // Document: extract text via backend
+        try {
+          const result = await invoke<string>("upload_file", { name: file.name, dataBase64: b64 });
+          if (result.startsWith("IMAGE:")) {
+            const parts = result.split(":");
+            pendingAttachments.push({ name: file.name, type: "image", data: parts[2], mime: parts[1] });
+          } else {
+            pendingAttachments.push({ name: file.name, type: "document", data: result });
+          }
+          render();
+        } catch (e) {
+          pendingAttachments.push({ name: file.name, type: "document", data: `[Error reading ${file.name}: ${e}]` });
+          render();
+        }
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
 }
 
 // Voice-only conversation (no text UI, speaks response)
@@ -323,6 +409,13 @@ function renderChat(): string {
 }
 
 function renderInput(): string {
+  const attachmentPills = pendingAttachments.map((att, i) => {
+    if (att.type === "image" && att.preview) {
+      return `<div class="attach-pill"><img src="${att.preview}" class="attach-thumb"><span>${att.name}</span><button class="attach-remove" data-att-idx="${i}">×</button></div>`;
+    }
+    return `<div class="attach-pill"><span class="attach-icon">📄</span><span>${att.name}</span><button class="attach-remove" data-att-idx="${i}">×</button></div>`;
+  }).join("");
+
   return `<footer class="input-footer">
     <div class="quick-actions">
       <button class="qa-btn" data-qa="clipboard" title="Paste clipboard">📋 Clipboard</button>
@@ -332,11 +425,14 @@ function renderInput(): string {
       <button class="qa-btn" data-qa="note" title="Quick note">📝 Note</button>
       <button class="qa-btn" data-qa="search" title="Search vault">🔍 Vault</button>
     </div>
+    ${attachmentPills ? `<div class="attach-bar">${attachmentPills}</div>` : ""}
     <div class="input-bar">
+      <button class="btn-attach" id="btn-attach" title="Attach file">📎</button>
+      <input type="file" id="file-input" multiple accept=".pdf,.docx,.xlsx,.pptx,.doc,.odt,.xls,.ods,.ppt,.odp,.rtf,.csv,.txt,.md,.png,.jpg,.jpeg,.gif,.webp" style="display:none">
       <textarea id="chat-input" placeholder="Ask Nebula anything..." ${isStreaming ? "disabled" : ""}></textarea>
       <button class="btn-send" id="btn-send" ${isStreaming ? "disabled" : ""}>↑</button>
     </div>
-    <div class="input-hint">Enter to send · Shift+Enter for newline · Ctrl+L clear · Ctrl+K vault</div>
+    <div class="input-hint">Enter to send · Shift+Enter for newline · 📎 to attach files</div>
   </footer>`;
 }
 
@@ -415,6 +511,16 @@ function attachListeners() {
   document.getElementById("btn-send")?.addEventListener("click", () => { if (input?.value.trim()) { sendMessage(input.value.trim()); input.value = ""; input.style.height = "auto"; } });
   input?.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (input.value.trim()) { sendMessage(input.value.trim()); input.value = ""; input.style.height = "auto"; } } });
   input?.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
+
+  // File upload
+  const fileInput = document.getElementById("file-input") as HTMLInputElement;
+  document.getElementById("btn-attach")?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", () => { if (fileInput.files?.length) { handleFileUpload(fileInput.files); fileInput.value = ""; } });
+  document.querySelectorAll("[data-att-idx]").forEach(el => el.addEventListener("click", () => {
+    const idx = parseInt((el as HTMLElement).dataset.attIdx || "0");
+    pendingAttachments.splice(idx, 1);
+    render();
+  }));
 
   // Quick actions
   document.querySelectorAll("[data-qa]").forEach(el => el.addEventListener("click", () => {

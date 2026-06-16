@@ -52,17 +52,16 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             api_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
-            base_url: "https://proxy.shift.aws.dev".into(),
+            base_url: std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".into()),
             model: "us.anthropic.claude-sonnet-4-6".into(),
-            fast_model: "anthropic.claude-haiku-4-5-20251001-v1:0".into(),
+            fast_model: "us.anthropic.claude-haiku-4-5-20251001-v1:0".into(),
             fallback_models: vec![
                 "anthropic.claude-sonnet-4-6".into(),
                 "us.anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
-                "anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
             ],
             max_tokens: 4096,
             fast_max_tokens: 2048,
-            vault_path: "~/Documents/vault/JARVIS".into(),
+            vault_path: "~/Documents/vault/Nebula".into(),
             voice: VoiceConfig {
                 enabled: true,
                 model: "/home/dylan/.local/share/piper-voices/en_US-ryan-high.onnx".into(),

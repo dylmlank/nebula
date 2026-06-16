@@ -16,6 +16,14 @@ const SYSTEM_PROMPT: &str = "You are Nebula, an autonomous AI assistant with ful
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub images: Vec<ImageData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageData {
+    pub mime_type: String,
+    pub data: String, // base64
 }
 
 pub struct Brain {
@@ -50,9 +58,19 @@ impl Brain {
         text: &str,
         tx: mpsc::UnboundedSender<StreamEvent>,
     ) -> String {
+        self.chat_stream_with_images(text, vec![], tx).await
+    }
+
+    pub async fn chat_stream_with_images(
+        &mut self,
+        text: &str,
+        images: Vec<ImageData>,
+        tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> String {
         self.history.push(Message {
             role: "user".into(),
             content: text.into(),
+            images: images.clone(),
         });
 
         let system = self.build_system();
@@ -66,6 +84,7 @@ impl Brain {
         self.history.push(Message {
             role: "assistant".into(),
             content: response.clone(),
+            images: vec![],
         });
 
         // Log interaction to daily file
@@ -160,6 +179,7 @@ impl Brain {
         self.history.push(Message {
             role: "user".into(),
             content: feedback,
+            images: vec![],
         });
 
         // Use fast model for tool followups
@@ -176,6 +196,7 @@ impl Brain {
         self.history.push(Message {
             role: "assistant".into(),
             content: followup.clone(),
+            images: vec![],
         });
 
         // Recurse for chained calls
@@ -310,12 +331,18 @@ impl Brain {
         // Get system state snapshot (quick — non-blocking summary)
         let sys_state = self.get_quick_system_state();
 
+        // Load learnings from retrospectives
+        let learnings = self.load_learnings();
+
         let mut dynamic_parts = Vec::new();
         if !sys_state.is_empty() {
             dynamic_parts.push(format!("Environment:\n{}", sys_state));
         }
         if !memory_ctx.is_empty() {
             dynamic_parts.push(format!("Memory:\n{}", memory_ctx));
+        }
+        if !learnings.is_empty() {
+            dynamic_parts.push(format!("Learnings from past sessions:\n{}", learnings));
         }
         dynamic_parts.push(format!("Date: {}", date));
 
@@ -367,6 +394,24 @@ impl Brain {
         self.cached_sys_state.clone()
     }
 
+    fn load_learnings(&self) -> String {
+        let vault_path = self.config.vault_path_expanded();
+        let learnings_file = vault_path.join("memory/learnings.md");
+
+        match std::fs::read_to_string(&learnings_file) {
+            Ok(content) => {
+                // Extract just the bullet points, skip frontmatter
+                let lines: Vec<&str> = content.lines()
+                    .filter(|l| l.starts_with("- "))
+                    .collect();
+                // Take last 20 learnings (most recent)
+                let recent: Vec<&str> = lines.iter().rev().take(20).rev().cloned().collect();
+                recent.join("\n")
+            }
+            Err(_) => String::new(),
+        }
+    }
+
     fn build_messages(&self) -> Vec<Value> {
         let window: Vec<&Message> = self.history.iter().rev().take(20).collect::<Vec<_>>();
         let window: Vec<&Message> = window.into_iter().rev().collect();
@@ -377,21 +422,37 @@ impl Brain {
             let role = &msg.role;
             let content = &msg.content;
 
+            // Build content blocks
+            let mut content_blocks: Vec<Value> = Vec::new();
+
+            // Add images first (for vision)
+            for img in &msg.images {
+                content_blocks.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": &img.mime_type,
+                        "data": &img.data
+                    }
+                }));
+            }
+
+            // Add text
+            content_blocks.push(json!({"type": "text", "text": content}));
+
             if let Some(last) = messages.last_mut() {
-                if last.get("role").and_then(|r| r.as_str()) == Some(role) {
-                    // Merge consecutive same-role messages
-                    let existing = last.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                    *last = json!({
-                        "role": role,
-                        "content": [{"type": "text", "text": format!("{}\n\n{}", existing, content)}]
-                    });
+                if last.get("role").and_then(|r| r.as_str()) == Some(role) && msg.images.is_empty() {
+                    // Merge consecutive same-role text-only messages
+                    if let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
+                        arr.push(json!({"type": "text", "text": content}));
+                    }
                     continue;
                 }
             }
 
             messages.push(json!({
                 "role": role,
-                "content": [{"type": "text", "text": content}]
+                "content": content_blocks
             }));
         }
 
@@ -443,29 +504,149 @@ impl Brain {
 
         let vault_path = self.config.vault_path_expanded();
         let summaries_dir = vault_path.join("summaries");
+        let retro_dir = vault_path.join("retrospectives");
+        let learnings_file = vault_path.join("memory/learnings.md");
         let _ = std::fs::create_dir_all(&summaries_dir);
+        let _ = std::fs::create_dir_all(&retro_dir);
+        let _ = std::fs::create_dir_all(vault_path.join("memory"));
 
         let today = Local::now().format("%Y-%m-%d").to_string();
         let timestamp = Local::now().format("%H%M").to_string();
+
+        // Build conversation digest for retrospective
+        let mut digest = Vec::new();
+        for msg in &self.history {
+            let role = if msg.role == "user" { "U" } else { "N" };
+            let content = &msg.content;
+            if content.len() > 10 && !content.starts_with('[') {
+                digest.push(format!("{}: {}", role, &content[..content.len().min(200)]));
+            }
+        }
+        digest.truncate(30);
+        let conversation_digest = digest.join("\n");
+
+        // Load existing learnings for context
+        let existing_learnings = std::fs::read_to_string(&learnings_file).unwrap_or_default();
+
+        // Run retrospective via LLM
+        let retro_prompt = format!(
+            "Analyze this Nebula session and extract learnings. Be concise.\n\n\
+            Session ({} messages):\n{}\n\n\
+            Existing learnings:\n{}\n\n\
+            Respond with EXACTLY this format (no other text):\n\
+            PREFERENCES: (user preferences/style noticed, 1-2 bullets or NONE)\n\
+            PATTERNS: (recurring requests/workflows, 1-2 bullets or NONE)\n\
+            IMPROVEMENTS: (what Nebula could do better, 1-2 bullets or NONE)\n\
+            FACTS: (new facts learned about the user/environment, 1-2 bullets or NONE)",
+            self.history.len(),
+            &conversation_digest[..conversation_digest.len().min(3000)],
+            &existing_learnings[..existing_learnings.len().min(1000)],
+        );
+
+        // Sync API call (non-streaming, fast model)
+        let client = reqwest::blocking::Client::new();
+        let body = serde_json::json!({
+            "model": &self.config.fast_model,
+            "max_tokens": 500,
+            "system": "You analyze AI assistant sessions and extract actionable learnings. Be terse.",
+            "messages": [{"role": "user", "content": retro_prompt}],
+        });
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let result = client.post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send();
+
+        let retro_text = match result {
+            Ok(resp) => {
+                match resp.json::<serde_json::Value>() {
+                    Ok(json) => {
+                        json.get("content")
+                            .and_then(|c| c.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|b| b.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    }
+                    Err(_) => String::new(),
+                }
+            }
+            Err(e) => {
+                eprintln!("[retro] API error: {}", e);
+                String::new()
+            }
+        };
+
+        if retro_text.is_empty() {
+            eprintln!("[retro] No response, skipping");
+            return;
+        }
+
+        // Save full retrospective
+        let retro_file = retro_dir.join(format!("{}-{}.md", today, timestamp));
+        let retro_content = format!(
+            "---\ntags: [retrospective, session]\ndate: {}\n---\n\n# Session Retrospective {}\n\nMessages: {}\n\n{}\n",
+            today,
+            Local::now().format("%Y-%m-%d %H:%M"),
+            self.history.len(),
+            retro_text,
+        );
+        let _ = std::fs::write(&retro_file, &retro_content);
+
+        // Extract and append new learnings to the master learnings file
+        let mut new_learnings = Vec::new();
+        for line in retro_text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("- ") || trimmed.starts_with("• ") {
+                let learning = trimmed.trim_start_matches("- ").trim_start_matches("• ").trim();
+                if !learning.is_empty()
+                    && learning != "NONE"
+                    && !existing_learnings.contains(learning)
+                {
+                    new_learnings.push(format!("- {}", learning));
+                }
+            }
+        }
+
+        if !new_learnings.is_empty() {
+            let mut content = existing_learnings;
+            if content.is_empty() {
+                content = format!("---\ntags: [learnings, memory]\nupdated: {}\n---\n\n# Nebula Learnings\n\nAccumulated from session retrospectives.\n\n", today);
+            } else {
+                // Update the date
+                if let Some(pos) = content.find("updated: ") {
+                    if let Some(end) = content[pos..].find('\n') {
+                        content.replace_range(pos..pos + end, &format!("updated: {}", today));
+                    }
+                }
+            }
+            content.push_str(&format!("\n## {} {}\n{}\n",
+                today,
+                Local::now().format("%H:%M"),
+                new_learnings.join("\n"),
+            ));
+            let _ = std::fs::write(&learnings_file, content);
+            eprintln!("[retro] Saved {} new learnings", new_learnings.len());
+        }
+
+        // Also save basic summary
         let summary_file = summaries_dir.join(format!("{}-session-{}.md", today, timestamp));
-
-        // Build a condensed version of the conversation
         let mut topics: Vec<String> = Vec::new();
-
         for msg in &self.history {
             if msg.role == "user" {
                 let content = &msg.content;
-                // Skip very short messages and tool results
                 if content.len() > 10 && !content.starts_with('[') {
                     topics.push(format!("- {}", &content[..content.len().min(100)]));
                 }
             }
         }
-
         topics.truncate(10);
-
         let summary_content = format!(
-            "---\ntags: [summary, session]\ndate: {}\n---\n\nSession Summary {}\n\nTopics discussed:\n{}\n\nMessages: {}\n",
+            "---\ntags: [summary, session]\ndate: {}\n---\n\nSession Summary {}\n\nTopics:\n{}\n\nMessages: {}\n",
             today,
             Local::now().format("%Y-%m-%d %H:%M"),
             topics.join("\n"),
