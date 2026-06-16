@@ -280,7 +280,15 @@ async fn island_listen_once(app: AppHandle) -> Result<String, String> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command as TokioCommand;
 
+    // Resolve nebula's own sidecar first (next to the binary, same scheme as
+    // start_voice_mode), then fall back to legacy locations.
+    let exe_relative = std::env::current_exe()
+        .unwrap_or_default()
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("../../../sidecar/listen_once.py");
     let candidates = [
+        exe_relative,
         dirs::home_dir().unwrap_or_default().join("jarvis-v4/sidecar/listen_once.py"),
         dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/listen_once.py"),
     ];
