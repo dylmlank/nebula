@@ -384,8 +384,10 @@ fn main() {
             let mut brain = brain;
             brain.set_vault(vault.clone());
 
+            let brain_arc = Arc::new(Mutex::new(brain));
+
             let state = AppState {
-                brain: Arc::new(Mutex::new(brain)),
+                brain: brain_arc.clone(),
                 config: Arc::new(Mutex::new(config)),
                 vault: vault.clone(),
                 voice,
@@ -394,35 +396,107 @@ fn main() {
             // Start file watcher for auto-reindex
             vault.start_watcher();
 
-            // Proactive system monitor — alerts on high CPU/RAM/disk
+            // Autonomous observer loop. Two responsibilities:
+            //  1. Hard alerts — instantaneous resource thresholds (cheap, no LLM).
+            //  2. Proactive reasoning — tracks state ACROSS ticks (mode changes,
+            //     window dwell, sustained load) and, on a meaningful transition,
+            //     asks the brain whether to surface a short nudge. Heavily gated
+            //     by a cooldown so it never nags.
             let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
+            let observer_brain = brain_arc.clone();
+            // Use Tauri's managed async runtime — the setup hook runs before a
+            // tokio reactor is otherwise available, so a bare tokio::spawn panics.
+            tauri::async_runtime::spawn(async move {
+                let mut last_mode = String::new();
+                let mut last_window = String::new();
+                let mut window_dwell_secs: u64 = 0;
+                let mut high_load_streak: u32 = 0;
+                let mut last_suggestion = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(3600))
+                    .unwrap_or_else(std::time::Instant::now);
+
+                const TICK_SECS: u64 = 30;
+                const SUGGESTION_COOLDOWN_SECS: u64 = 600; // at most one nudge / 10 min
+                const DWELL_NUDGE_SECS: u64 = 1800;        // 30 min on one window
+
                 loop {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
-                    let state = observer::gather_system_state();
+                    tokio::time::sleep(std::time::Duration::from_secs(TICK_SECS)).await;
 
-                    // Alert on high memory
-                    if state.hardware.memory_percent > 90.0 {
+                    // gather_system_state() blocks (~200ms sysinfo sleep + shelling out).
+                    let sys = match tokio::task::spawn_blocking(observer::gather_system_state).await {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+
+                    // --- 1. Hard threshold alerts (no LLM) ---
+                    if sys.hardware.memory_percent > 90.0 {
                         let _ = app_handle.emit("system-alert", serde_json::json!({
                             "type": "warning",
-                            "message": format!("High memory usage: {:.0}%", state.hardware.memory_percent)
+                            "message": format!("High memory usage: {:.0}%", sys.hardware.memory_percent)
+                        }));
+                    }
+                    if sys.hardware.disk_free_gb < 5.0 {
+                        let _ = app_handle.emit("system-alert", serde_json::json!({
+                            "type": "warning",
+                            "message": format!("Low disk space: {:.1}GB free", sys.hardware.disk_free_gb)
                         }));
                     }
 
-                    // Alert on low disk
-                    if state.hardware.disk_free_gb < 5.0 {
-                        let _ = app_handle.emit("system-alert", serde_json::json!({
-                            "type": "warning",
-                            "message": format!("Low disk space: {:.1}GB free", state.hardware.disk_free_gb)
-                        }));
+                    // --- 2. Cross-tick state tracking → events worth reasoning about ---
+                    let mode = sys.workspace.current_mode.clone();
+                    let window = sys.processes.active_window.clone();
+
+                    if window == last_window {
+                        window_dwell_secs += TICK_SECS;
+                    } else {
+                        window_dwell_secs = 0;
+                        last_window = window.clone();
                     }
 
-                    // Alert on high CPU sustained
-                    if state.hardware.cpu_usage > 95.0 {
-                        let _ = app_handle.emit("system-alert", serde_json::json!({
-                            "type": "warning",
-                            "message": format!("High CPU: {:.0}%", state.hardware.cpu_usage)
-                        }));
+                    if sys.hardware.cpu_usage > 90.0 {
+                        high_load_streak += 1;
+                    } else {
+                        high_load_streak = 0;
+                    }
+
+                    // Detect a noteworthy event (most ticks produce none).
+                    let event: Option<String> = if !last_mode.is_empty() && mode != last_mode {
+                        Some(format!(
+                            "User switched from '{}' mode to '{}' mode (active window: {}).",
+                            last_mode, mode, &window[..window.len().min(60)]
+                        ))
+                    } else if window_dwell_secs == DWELL_NUDGE_SECS {
+                        Some(format!(
+                            "User has stayed on the same window for {} minutes: {}.",
+                            DWELL_NUDGE_SECS / 60, &window[..window.len().min(60)]
+                        ))
+                    } else if high_load_streak == 4 {
+                        // ~2 min sustained > 90% CPU
+                        Some(format!(
+                            "CPU has been pegged above 90% for ~2 minutes (mode: {}).",
+                            mode
+                        ))
+                    } else {
+                        None
+                    };
+                    last_mode = mode;
+
+                    // --- 3. Ask the brain, gated by cooldown ---
+                    if let Some(event_desc) = event {
+                        if last_suggestion.elapsed().as_secs() < SUGGESTION_COOLDOWN_SECS {
+                            continue; // recently nudged — stay quiet
+                        }
+                        // try_lock: if the user is mid-conversation, skip this tick
+                        // rather than block their request behind a background task.
+                        if let Ok(brain) = observer_brain.try_lock() {
+                            if let Some(suggestion) = brain.consider_proactive(&event_desc).await {
+                                last_suggestion = std::time::Instant::now();
+                                let _ = app_handle.emit("proactive-suggestion", serde_json::json!({
+                                    "message": suggestion,
+                                    "context": event_desc,
+                                }));
+                            }
+                        }
                     }
                 }
             });

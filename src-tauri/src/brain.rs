@@ -215,20 +215,59 @@ impl Brain {
             .chain(self.config.fallback_models.iter().cloned())
             .collect();
 
+        // Per-model retry budget for transient errors (429/5xx/timeout) before
+        // moving on. Free-tier limits are usually per-minute, so a couple of
+        // short backoff retries on the SAME model often clears a 429 without
+        // burning the whole fallback chain.
+        const MAX_RETRIES_PER_MODEL: u32 = 2;
+
         for m in &models_to_try {
-            match self.try_stream(system, messages, m, max_tokens, tx).await {
-                Ok(response) => return response,
-                Err(e) => {
-                    eprintln!("[brain] Model {} FAILED: {}", m, e);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    continue;
+            let mut attempt: u32 = 0;
+            loop {
+                match self.try_stream(system, messages, m, max_tokens, tx).await {
+                    Ok(response) => return response,
+                    Err(ApiError::Fatal(e)) => {
+                        // Bad key / malformed request / auth — sweeping other
+                        // models won't help. Abort the whole chain.
+                        eprintln!("[brain] Model {} FATAL: {} (aborting fallback)", m, e);
+                        let msg = format!("[Request rejected: {}]", e);
+                        let _ = tx.send(StreamEvent::Token(msg.clone()));
+                        return msg;
+                    }
+                    Err(ApiError::Streamed(partial)) => {
+                        // We already streamed tokens to the user; retrying would
+                        // double-print. Keep what we have.
+                        eprintln!("[brain] Model {} stream truncated, keeping {} chars", m, partial.len());
+                        return partial;
+                    }
+                    Err(ApiError::Retryable { reason, retry_after }) => {
+                        eprintln!("[brain] Model {} retryable ({}), attempt {}/{}", m, reason, attempt + 1, MAX_RETRIES_PER_MODEL + 1);
+                        if attempt >= MAX_RETRIES_PER_MODEL {
+                            break; // give up on this model, try the next
+                        }
+                        let delay = retry_after.unwrap_or_else(|| Self::backoff_delay(attempt));
+                        tokio::time::sleep(delay).await;
+                        attempt += 1;
+                        continue;
+                    }
                 }
             }
+            // brief pause before switching models
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
 
-        let msg = "[All models unavailable — try again]".to_string();
+        let msg = "[All models rate-limited or unavailable — try again in a moment]".to_string();
         let _ = tx.send(StreamEvent::Token(msg.clone()));
         msg
+    }
+
+    /// Exponential backoff with deterministic jitter (no rng dep).
+    /// attempt 0 -> ~0.6s, 1 -> ~1.4s, 2 -> ~3.0s
+    fn backoff_delay(attempt: u32) -> std::time::Duration {
+        let base_ms = 500u64 * (1u64 << attempt); // 500, 1000, 2000...
+        // jitter derived from the attempt so retries don't thundering-herd
+        let jitter = 100 + (attempt as u64 * 137) % 400;
+        std::time::Duration::from_millis(base_ms + jitter)
     }
 
     async fn try_stream(
@@ -238,7 +277,7 @@ impl Brain {
         model: &str,
         max_tokens: u32,
         tx: &mpsc::UnboundedSender<StreamEvent>,
-    ) -> Result<String, String> {
+    ) -> Result<String, ApiError> {
         let body = json!({
             "model": model,
             "max_tokens": max_tokens,
@@ -258,16 +297,34 @@ impl Brain {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| {
+                // Network/timeout — worth retrying or falling back.
+                ApiError::Retryable { reason: format!("request failed: {}", e), retry_after: None }
+            })?;
 
         let status = response.status();
         if status.as_u16() == 429 {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            return Err("Rate limited".into());
+            // Honor Retry-After (seconds) if the server sent one.
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .map(std::time::Duration::from_secs);
+            return Err(ApiError::Retryable { reason: "rate limited (429)".into(), retry_after });
+        }
+        if status.is_server_error() {
+            // 5xx — provider-side, retry / fall back.
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::Retryable {
+                reason: format!("HTTP {}: {}", status, &body[..200.min(body.len())]),
+                retry_after: None,
+            });
         }
         if !status.is_success() {
+            // 4xx other than 429 (400 bad request, 401/403 auth) — fatal.
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("HTTP {}: {}", status, &body[..200.min(body.len())]));
+            return Err(ApiError::Fatal(format!("HTTP {}: {}", status, &body[..200.min(body.len())])));
         }
 
         // Parse SSE stream
@@ -276,7 +333,20 @@ impl Brain {
         let mut buffer = String::new();
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    // Mid-stream failure. If we've already emitted tokens to the
+                    // user, retrying would double-print — keep the partial.
+                    if !full_response.is_empty() {
+                        return Err(ApiError::Streamed(full_response));
+                    }
+                    return Err(ApiError::Retryable {
+                        reason: format!("stream error: {}", e),
+                        retry_after: None,
+                    });
+                }
+            };
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
             // Process complete SSE lines
@@ -312,7 +382,7 @@ impl Brain {
         eprintln!("[brain] Stream complete, {} chars", full_response.len());
 
         if full_response.is_empty() {
-            return Err("Empty response".into());
+            return Err(ApiError::Retryable { reason: "empty response".into(), retry_after: None });
         }
 
         Ok(full_response)
@@ -468,6 +538,79 @@ impl Brain {
 
     pub fn clear(&mut self) {
         self.history.clear();
+    }
+
+    /// Proactive reasoning: given an observed environment event, decide whether
+    /// Nebula should surface a short, dismissible nudge — and what it should say.
+    ///
+    /// This is the autonomous core: it uses the fast model, the vault memory,
+    /// and the user's learnings to judge relevance. Returns `None` when nothing
+    /// is worth interrupting for (the common case), so the caller stays quiet.
+    pub async fn consider_proactive(&self, event_desc: &str) -> Option<String> {
+        let memory_ctx = self
+            .vault
+            .as_ref()
+            .map(|v| v.get_context())
+            .unwrap_or_default();
+        let learnings = self.load_learnings();
+
+        let prompt = format!(
+            "You passively observe the user's desktop. An event just occurred:\n{event}\n\n\
+            What you know about the user:\nMemory: {memory}\nLearnings: {learnings}\n\n\
+            Decide if a SHORT proactive suggestion is genuinely helpful right now. \
+            Most of the time it is NOT — silence is the default. Only speak up if you \
+            can offer concrete, timely value the user would thank you for.\n\n\
+            Reply with EXACTLY one line:\n\
+            SKIP   (if nothing useful — this is usually correct)\n\
+            or\n\
+            SAY: <one short sentence, under 120 chars, no preamble>",
+            event = event_desc,
+            memory = &memory_ctx[..memory_ctx.len().min(800)],
+            learnings = &learnings[..learnings.len().min(600)],
+        );
+
+        let body = json!({
+            "model": &self.config.fast_model,
+            "max_tokens": 80,
+            "system": "You are Nebula's proactive judgment. You strongly prefer to stay silent. Output only SKIP or SAY: <text>.",
+            "messages": [{"role": "user", "content": prompt}],
+        });
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .ok()?;
+
+        if !resp.status().is_success() {
+            return None; // never let proactivity errors disrupt the user
+        }
+
+        let json: Value = resp.json().await.ok()?;
+        let text = json
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|b| b.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        // Parse the decision. Default to silence on anything unexpected.
+        if let Some(rest) = text.strip_prefix("SAY:") {
+            let msg = rest.trim();
+            if !msg.is_empty() && !msg.eq_ignore_ascii_case("skip") {
+                return Some(msg.chars().take(160).collect());
+            }
+        }
+        None
     }
 
     /// Log an interaction to today's log file
@@ -656,6 +799,22 @@ impl Brain {
         let _ = std::fs::write(&summary_file, summary_content);
         eprintln!("Session summary saved: {}", summary_file.display());
     }
+}
+
+/// Classifies API failures so the fallback logic knows whether to retry the
+/// same model, fall through to the next, abort entirely, or keep a partial.
+#[derive(Debug)]
+enum ApiError {
+    /// Transient (429 / 5xx / network / empty) — retry same model, then fall back.
+    Retryable {
+        reason: String,
+        retry_after: Option<std::time::Duration>,
+    },
+    /// Permanent (400 / 401 / 403) — abort the whole fallback chain.
+    Fatal(String),
+    /// Stream already delivered tokens before failing — keep what we have,
+    /// retrying would double-print to the user.
+    Streamed(String),
 }
 
 #[derive(Debug, Clone)]

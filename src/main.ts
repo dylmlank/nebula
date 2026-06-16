@@ -94,6 +94,33 @@ listen<{type: string, message: string}>("system-alert", (e) => {
   setTimeout(() => { toast.classList.remove("show"); setTimeout(() => toast.remove(), 300); }, 5000);
 });
 
+// Proactive suggestions from the autonomous observer loop.
+// Unlike hard alerts, these are dismissible and actionable: clicking the body
+// sends the suggestion into the chat so Nebula can act on it.
+listen<{message: string, context: string}>("proactive-suggestion", (e) => {
+  const { message } = e.payload;
+  const card = document.createElement("div");
+  card.className = "proactive-nudge";
+  card.innerHTML = `
+    <span class="nudge-icon">✦</span>
+    <span class="nudge-text"></span>
+    <button class="nudge-dismiss" title="Dismiss">×</button>`;
+  (card.querySelector(".nudge-text") as HTMLElement).textContent = message;
+
+  const dismiss = () => { card.classList.remove("show"); setTimeout(() => card.remove(), 300); };
+  card.querySelector(".nudge-dismiss")?.addEventListener("click", (ev) => { ev.stopPropagation(); dismiss(); });
+  // Click the nudge → act on it
+  card.querySelector(".nudge-text")?.addEventListener("click", () => {
+    invoke("send_message", { message }).catch(() => {});
+    dismiss();
+  });
+
+  document.body.appendChild(card);
+  setTimeout(() => card.classList.add("show"), 10);
+  // Linger longer than a hard alert, but still auto-dismiss so it never piles up.
+  setTimeout(dismiss, 20000);
+});
+
 // Voice mode events from Python sidecar
 listen<{type: string, text?: string, message?: string}>("voice-mode-event", (e) => {
   const ev = e.payload;
