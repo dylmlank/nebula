@@ -64,26 +64,24 @@ html, body {
   box-shadow: 0 2px 16px rgba(124, 143, 255, 0.4);
 }
 
-/* ── Capsule shared (compact + expanded) ── */
+/* ── Capsule shared (compact + expanded + consult) ── */
 .island-capsule {
   background: var(--isl-bg);
   border: 1px solid var(--isl-border);
-  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   color: var(--isl-text);
   overflow: hidden;
-  /* The morph: width/height/radius animate so states grow from one capsule. */
-  transition:
-    width 0.4s var(--isl-spring),
-    height 0.4s var(--isl-spring),
-    border-radius 0.4s var(--isl-spring),
-    padding 0.3s ease;
-  cursor: pointer;
-  animation: island-pop 0.4s var(--isl-spring);
+  cursor: default;
+  /* Entrance only — a single gentle settle, not on every state change. */
+  animation: island-in 0.32s var(--isl-spring);
+  transition: box-shadow 0.25s ease;
 }
 
-@keyframes island-pop {
-  from { transform: scale(0.85); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
+@keyframes island-in {
+  from { transform: translateY(-8px) scale(0.92); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 /* Compact: icon + one line */
@@ -130,23 +128,24 @@ html, body {
 .island-capsule.consult {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   width: 350px;
   padding: 8px 10px;
   border-radius: 20px;
-  cursor: default;
 }
 .island-input-row { display: flex; align-items: center; gap: 8px; }
 .island-input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   outline: none;
   color: var(--isl-text);
-  font-size: 13px;
+  font-size: 13.5px;
   font-family: inherit;
+  caret-color: var(--isl-accent);
 }
 .island-input::placeholder { color: var(--isl-muted); }
+.island-status-slot:empty { display: none; }
 .island-mic, .island-send {
   background: var(--isl-bg2);
   border: 1px solid var(--isl-border);
@@ -166,11 +165,14 @@ html, body {
   font-weight: 700;
 }
 .island-mic:hover, .island-send:hover { transform: translateY(-1px); filter: brightness(1.1); }
+.island-mic:active, .island-send:active { transform: translateY(0); }
 .island-status {
   font-size: 11px;
   color: var(--isl-accent);
-  padding: 0 6px 2px;
+  padding: 5px 6px 1px;
+  animation: status-in 0.2s ease;
 }
+@keyframes status-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Expanded answer card */
 .island-capsule.expanded {
