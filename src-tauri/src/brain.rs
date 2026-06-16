@@ -688,6 +688,82 @@ impl Brain {
         Some(text.chars().take(240).collect())
     }
 
+    /// Answer a user's question about what's on their screen. This is the
+    /// "ultra expert looking over your shoulder" consult: the user asks (voice
+    /// or text), we look at the screen right now, and answer with full context.
+    ///
+    /// Unlike observe_screen (which decides whether to speak at all), this always
+    /// answers because the user explicitly asked. Returns the answer text.
+    pub async fn answer_about_screen(&self, question: &str, png_base64: &str) -> String {
+        let memory_ctx = self
+            .vault
+            .as_ref()
+            .map(|v| v.get_context())
+            .unwrap_or_default();
+        let learnings = self.load_learnings();
+
+        let instruction = format!(
+            "You are Nebula, an expert looking over the user's shoulder at their screen. \
+            They just asked you:\n\"{q}\"\n\n\
+            Context about them:\nMemory: {memory}\nLearnings: {learnings}\n\n\
+            Look at the screenshot and answer their question directly and expertly. \
+            Reference what you actually see on screen. Be concise but genuinely \
+            helpful — like a sharp expert giving a quick, confident answer. \
+            Plain prose, no preamble.",
+            q = question,
+            memory = &memory_ctx[..memory_ctx.len().min(800)],
+            learnings = &learnings[..learnings.len().min(600)],
+        );
+
+        let content = json!([
+            {
+                "type": "image",
+                "source": { "type": "base64", "media_type": "image/png", "data": png_base64 }
+            },
+            { "type": "text", "text": instruction }
+        ]);
+
+        let body = json!({
+            "model": &self.config.model,
+            "max_tokens": 600,
+            "system": "You are Nebula — a sharp, concise expert who can see the user's screen. Answer directly.",
+            "messages": [{ "role": "user", "content": content }],
+        });
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let resp = match self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return format!("Couldn't reach Nebula: {}", e),
+        };
+
+        if !resp.status().is_success() {
+            return "Nebula couldn't answer right now — try again.".into();
+        }
+
+        let json: Value = match resp.json().await {
+            Ok(j) => j,
+            Err(_) => return "Nebula got a garbled response — try again.".into(),
+        };
+
+        json.get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|b| b.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("(no answer)")
+            .trim()
+            .to_string()
+    }
+
     /// Log an interaction to today's log file
     fn log_interaction(&self, user_msg: &str, assistant_msg: &str) {
         let vault_path = self.config.vault_path_expanded();

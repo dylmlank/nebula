@@ -207,16 +207,10 @@ struct ScreenObservation {
     say: Option<String>,
 }
 
-/// Nebula Island's manual screen-read trigger: capture the screen, send it to
-/// the brain's vision sense, and return what (if anything) it wants to chime
-/// in about. Capture is screenshot-on-demand only — never ambient.
-#[tauri::command]
-async fn island_observe_screen(
-    state: tauri::State<'_, AppState>,
-) -> Result<ScreenObservation, String> {
+/// Capture the current screen and return it as base64 PNG. Shell-out runs on a
+/// blocking thread. Screenshot-on-demand only — never ambient.
+async fn capture_screen_b64() -> Result<String, String> {
     use base64::Engine;
-
-    // Capture the current screen (blocking shell-out off the async thread).
     let png = tokio::task::spawn_blocking(|| {
         let path = "/tmp/nebula_island_capture.png";
         let ok = std::process::Command::new("grim").arg(path).output()
@@ -231,14 +225,101 @@ async fn island_observe_screen(
     })
     .await
     .map_err(|e| format!("capture task: {}", e))??;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&png))
+}
 
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+#[derive(serde::Serialize)]
+struct ConsultAnswer {
+    answer: String,
+}
 
-    // Reason about it. try_lock so a screen-read never blocks an active chat;
-    // if the brain is busy, tell the user rather than hang the island.
+/// The "ask an expert who's watching your screen" consult. Takes a question
+/// (from voice or text), captures the screen, answers with vision + context,
+/// speaks the answer aloud, and returns it for display on the island.
+#[tauri::command]
+async fn island_consult(
+    state: tauri::State<'_, AppState>,
+    question: String,
+) -> Result<ConsultAnswer, String> {
+    let q = question.trim().to_string();
+    if q.is_empty() {
+        return Err("empty question".into());
+    }
+    let b64 = capture_screen_b64().await?;
+
+    let answer = {
+        let brain = state.brain.try_lock().map_err(|_| "Nebula is busy — try again".to_string())?;
+        brain.answer_about_screen(&q, &b64).await
+    };
+
+    // Speak it aloud (no-op if voice is disabled).
+    state.voice.speak(&answer);
+
+    Ok(ConsultAnswer { answer })
+}
+
+/// Nebula Island's manual screen-read trigger: capture the screen, send it to
+/// the brain's vision sense, and return what (if anything) it wants to chime
+/// in about. Capture is screenshot-on-demand only — never ambient.
+#[tauri::command]
+async fn island_observe_screen(
+    state: tauri::State<'_, AppState>,
+) -> Result<ScreenObservation, String> {
+    let b64 = capture_screen_b64().await?;
+    // try_lock so a screen-read never blocks an active chat; if the brain is
+    // busy, tell the user rather than hang the island.
     let brain = state.brain.try_lock().map_err(|_| "Nebula is busy — try again".to_string())?;
     let say = brain.observe_screen(&b64).await;
     Ok(ScreenObservation { say })
+}
+
+/// One-shot voice input for the island: run the listen_once STT sidecar, which
+/// records a single utterance and prints the transcript. Returns the text.
+#[tauri::command]
+async fn island_listen_once(app: AppHandle) -> Result<String, String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command as TokioCommand;
+
+    let candidates = [
+        dirs::home_dir().unwrap_or_default().join("jarvis-v4/sidecar/listen_once.py"),
+        dirs::home_dir().unwrap_or_default().join("jarvis-v3/sidecar/listen_once.py"),
+    ];
+    let script = candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .ok_or_else(|| "listen_once.py sidecar not found".to_string())?;
+
+    let mut child = TokioCommand::new("python3")
+        .arg(&script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to start STT: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout from STT")?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    let mut transcript = String::new();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&line) {
+            match ev.get("type").and_then(|t| t.as_str()) {
+                Some("listening") => { let _ = app.emit("island-listening", ()); }
+                Some("transcript") => {
+                    transcript = ev.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
+                    break;
+                }
+                Some("error") => {
+                    let msg = ev.get("message").and_then(|m| m.as_str()).unwrap_or("unknown").to_string();
+                    let _ = child.kill().await;
+                    return Err(format!("voice: {}", msg));
+                }
+                _ => {}
+            }
+        }
+    }
+    let _ = child.wait().await;
+    Ok(transcript)
 }
 
 /// Bring the main chat window to the front (used when acting on a suggestion).
@@ -454,8 +535,12 @@ fn main() {
                     let x = ((screen.width as i32 - win_size.width as i32) / 2).max(0);
                     let _ = island.set_position(tauri::PhysicalPosition { x, y: 0 });
                 }
-                // Island is a passive overlay — keep it out of the way.
+                // Island is a passive overlay — keep it out of the way, and make
+                // it click-through by default so the empty/transparent area never
+                // blocks the apps beneath it. The frontend re-enables cursor
+                // events only while the consult/answer UI is open.
                 let _ = island.set_always_on_top(true);
+                let _ = island.set_ignore_cursor_events(true);
             }
 
             // Global hotkey: Ctrl+Shift+Space → ask the island to look at the screen.
@@ -614,6 +699,8 @@ fn main() {
             stop_speaking,
             get_system_state,
             island_observe_screen,
+            island_consult,
+            island_listen_once,
             focus_main_window,
         ])
         .run(tauri::generate_context!())
