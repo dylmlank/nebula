@@ -613,6 +613,81 @@ impl Brain {
         None
     }
 
+    /// Screen-aware proactive reasoning. Given a base64 PNG of the current
+    /// screen, look at it (vision) with the user's memory/learnings in context
+    /// and decide whether Nebula should chime in. Returns the one-line
+    /// observation/suggestion, or None to stay quiet.
+    ///
+    /// This is the manual ("hotkey/click") trigger for Nebula Island — the user
+    /// asked it to look, so the silence bar is lower than consider_proactive.
+    pub async fn observe_screen(&self, png_base64: &str) -> Option<String> {
+        let memory_ctx = self
+            .vault
+            .as_ref()
+            .map(|v| v.get_context())
+            .unwrap_or_default();
+        let learnings = self.load_learnings();
+
+        let instruction = format!(
+            "You are Nebula, looking at the user's screen because they just asked you to. \
+            What you know about them:\nMemory: {memory}\nLearnings: {learnings}\n\n\
+            Look at the screenshot and offer ONE genuinely useful, specific observation \
+            or suggestion about what they're doing right now — something timely they'd \
+            value (an error you spot, a next step, a relevant fact, a shortcut). \
+            Be concrete, reference what you actually see. Keep it under 180 chars, \
+            no preamble. If there is truly nothing useful to say, reply exactly: SKIP",
+            memory = &memory_ctx[..memory_ctx.len().min(800)],
+            learnings = &learnings[..learnings.len().min(600)],
+        );
+
+        let content = json!([
+            {
+                "type": "image",
+                "source": { "type": "base64", "media_type": "image/png", "data": png_base64 }
+            },
+            { "type": "text", "text": instruction }
+        ]);
+
+        let body = json!({
+            "model": &self.config.fast_model,
+            "max_tokens": 150,
+            "system": "You are Nebula's screen-aware sense. One specific, useful line, or SKIP.",
+            "messages": [{ "role": "user", "content": content }],
+        });
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .ok()?;
+
+        if !resp.status().is_success() {
+            return None;
+        }
+
+        let json: Value = resp.json().await.ok()?;
+        let text = json
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|b| b.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if text.is_empty() || text.eq_ignore_ascii_case("skip") || text.starts_with("SKIP") {
+            return None;
+        }
+        Some(text.chars().take(240).collect())
+    }
+
     /// Log an interaction to today's log file
     fn log_interaction(&self, user_msg: &str, assistant_msg: &str) {
         let vault_path = self.config.vault_path_expanded();

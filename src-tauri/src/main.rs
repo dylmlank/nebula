@@ -202,6 +202,55 @@ async fn get_system_state() -> Result<observer::SystemState, String> {
     Ok(observer::gather_system_state())
 }
 
+#[derive(serde::Serialize)]
+struct ScreenObservation {
+    say: Option<String>,
+}
+
+/// Nebula Island's manual screen-read trigger: capture the screen, send it to
+/// the brain's vision sense, and return what (if anything) it wants to chime
+/// in about. Capture is screenshot-on-demand only — never ambient.
+#[tauri::command]
+async fn island_observe_screen(
+    state: tauri::State<'_, AppState>,
+) -> Result<ScreenObservation, String> {
+    use base64::Engine;
+
+    // Capture the current screen (blocking shell-out off the async thread).
+    let png = tokio::task::spawn_blocking(|| {
+        let path = "/tmp/nebula_island_capture.png";
+        let ok = std::process::Command::new("grim").arg(path).output()
+            .or_else(|_| std::process::Command::new("scrot").arg(path).output())
+            .or_else(|_| std::process::Command::new("import").args(["-window", "root", path]).output())
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ok {
+            return Err("no screenshot tool (grim/scrot/import) available".to_string());
+        }
+        std::fs::read(path).map_err(|e| format!("read capture: {}", e))
+    })
+    .await
+    .map_err(|e| format!("capture task: {}", e))??;
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+
+    // Reason about it. try_lock so a screen-read never blocks an active chat;
+    // if the brain is busy, tell the user rather than hang the island.
+    let brain = state.brain.try_lock().map_err(|_| "Nebula is busy — try again".to_string())?;
+    let say = brain.observe_screen(&b64).await;
+    Ok(ScreenObservation { say })
+}
+
+/// Bring the main chat window to the front (used when acting on a suggestion).
+#[tauri::command]
+async fn focus_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn start_voice_mode(app: AppHandle) -> Result<String, String> {
     // Find the sidecar script
@@ -377,6 +426,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
             let voice = VoiceEngine::new(voice_model, voice_speed, voice_enabled);
 
@@ -395,6 +445,34 @@ fn main() {
 
             // Start file watcher for auto-reindex
             vault.start_watcher();
+
+            // ── Nebula Island: position the overlay at top-center of the
+            //    primary monitor, and register the global screen-read hotkey ──
+            if let Some(island) = app.get_webview_window("island") {
+                if let (Ok(Some(monitor)), Ok(win_size)) = (island.primary_monitor(), island.outer_size()) {
+                    let screen = monitor.size();
+                    let x = ((screen.width as i32 - win_size.width as i32) / 2).max(0);
+                    let _ = island.set_position(tauri::PhysicalPosition { x, y: 0 });
+                }
+                // Island is a passive overlay — keep it out of the way.
+                let _ = island.set_always_on_top(true);
+            }
+
+            // Global hotkey: Ctrl+Shift+Space → ask the island to look at the screen.
+            {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState, GlobalShortcutExt};
+                let trigger = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
+                let app_for_hotkey = app.handle().clone();
+                if let Err(e) = app.handle().global_shortcut().on_shortcut(trigger, move |_app, _sc, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        if let Some(island) = app_for_hotkey.get_webview_window("island") {
+                            let _ = island.emit("island-trigger", ());
+                        }
+                    }
+                }) {
+                    eprintln!("[island] failed to register hotkey: {}", e);
+                }
+            }
 
             // Autonomous observer loop. Two responsibilities:
             //  1. Hard alerts — instantaneous resource thresholds (cheap, no LLM).
@@ -535,6 +613,8 @@ fn main() {
             speak_response,
             stop_speaking,
             get_system_state,
+            island_observe_screen,
+            focus_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error running Nebula");

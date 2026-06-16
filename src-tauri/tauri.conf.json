@@ -20,6 +20,21 @@
         "minHeight": 400,
         "decorations": true,
         "transparent": false
+      },
+      {
+        "label": "island",
+        "title": "Nebula Island",
+        "url": "island.html",
+        "width": 380,
+        "height": 220,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": true
       }
     ],
     "security": {
@@ -42,6 +57,7 @@
   "plugins": {
     "shell": {
       "open": true
-    }
+    },
+    "global-shortcut": {}
   }
 }

@@ -1,0 +1,173 @@
+/* Nebula Island — transparent overlay, top-center capsule with spring morph */
+
+:root {
+  --isl-bg: #0b0d14;
+  --isl-bg2: #14161f;
+  --isl-text: #e8eaf0;
+  --isl-muted: #8a8fa3;
+  --isl-accent: #7c8fff;
+  --isl-accent2: #a78bfa;
+  --isl-grad: linear-gradient(135deg, #7c8fff, #a78bfa);
+  --isl-border: rgba(124, 143, 255, 0.35);
+  --isl-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* overshoot = springy */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: transparent !important;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The island is pinned to the top-center of the transparent window canvas. */
+.island {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+}
+
+/* ── Minimal: a small glowing pill ── */
+.island-pill {
+  width: 78px;
+  height: 22px;
+  border-radius: 12px;
+  background: var(--isl-bg);
+  border: 1px solid var(--isl-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0,0,0,0.4);
+  cursor: pointer;
+  transition: width 0.35s var(--isl-spring), height 0.35s var(--isl-spring), box-shadow 0.25s ease;
+  position: relative;
+}
+.island-pill::after {
+  content: "✦";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: var(--isl-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  opacity: 0.75;
+}
+.island-pill:hover {
+  box-shadow: 0 2px 16px rgba(124, 143, 255, 0.4);
+}
+
+/* ── Capsule shared (compact + expanded) ── */
+.island-capsule {
+  background: var(--isl-bg);
+  border: 1px solid var(--isl-border);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.6);
+  color: var(--isl-text);
+  overflow: hidden;
+  /* The morph: width/height/radius animate so states grow from one capsule. */
+  transition:
+    width 0.4s var(--isl-spring),
+    height 0.4s var(--isl-spring),
+    border-radius 0.4s var(--isl-spring),
+    padding 0.3s ease;
+  cursor: pointer;
+  animation: island-pop 0.4s var(--isl-spring);
+}
+
+@keyframes island-pop {
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* Compact: icon + one line */
+.island-capsule.compact {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 17px;
+  max-width: 340px;
+}
+.island-compact-text {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--isl-text);
+}
+
+.island-eye {
+  font-size: 13px;
+  background: var(--isl-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  flex-shrink: 0;
+}
+.island-eye.thinking { animation: eye-pulse 1s ease-in-out infinite; }
+@keyframes eye-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* thinking dots */
+.island-dots { display: inline-flex; gap: 3px; margin-left: 2px; }
+.island-dots i {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--isl-accent);
+  animation: dot 1.2s ease-in-out infinite;
+}
+.island-dots i:nth-child(2) { animation-delay: 0.2s; }
+.island-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot { 0%,100% { opacity: 0.3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+/* Expanded: a card */
+.island-capsule.expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 340px;
+  padding: 14px 16px 12px;
+  border-radius: 18px;
+  cursor: default;
+}
+.island-head { display: flex; align-items: center; gap: 8px; }
+.island-title { font-size: 13px; font-weight: 600; flex: 1; }
+.island-close {
+  background: none; border: none; color: var(--isl-muted);
+  font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px;
+  opacity: 0.7; transition: opacity 0.2s;
+}
+.island-close:hover { opacity: 1; }
+.island-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--isl-text);
+  max-height: 110px;
+  overflow-y: auto;
+}
+.island-actions { display: flex; gap: 8px; margin-top: 2px; }
+.island-action {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--isl-border);
+  background: var(--isl-bg2);
+  color: var(--isl-text);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.island-action:first-child {
+  background: var(--isl-grad);
+  border-color: transparent;
+  color: #0b0d14;
+  font-weight: 600;
+}
+.island-action:hover { transform: translateY(-1px); filter: brightness(1.08); }

@@ -1,13 +1,20 @@
 {
   "identifier": "default",
   "description": "Default capabilities for JARVIS",
-  "windows": ["main"],
+  "windows": ["main", "island"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
     "shell:default",
-    "notification:default"
+    "notification:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }
