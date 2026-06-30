@@ -1,7 +1,7 @@
 {
-  "name": "jarvis",
+  "name": "nebula",
   "version": "3.0.0",
-  "description": "JARVIS — Autonomous AI agent with voice, tools, and Obsidian brain",
+  "description": "NEBULA — Neural Engine for Behavioral Understanding, Learning, and Autonomy",
   "scripts": {
     "dev": "bun run --bun vite",
     "build": "bun run --bun vite build",

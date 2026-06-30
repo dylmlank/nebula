@@ -256,7 +256,7 @@ pub fn web_fetch(args: &HashMap<String, String>) -> String {
     }
 
     let result = Command::new("curl")
-        .args(["-sL", "-m", "10", "-A", "JARVIS/3.0", &url])
+        .args(["-sL", "-m", "10", "-A", "NEBULA/3.0", &url])
         .output();
 
     match result {
@@ -338,7 +338,7 @@ pub fn clipboard(args: &HashMap<String, String>) -> String {
 }
 
 pub fn notify(args: &HashMap<String, String>) -> String {
-    let title = args.get("title").cloned().unwrap_or_else(|| "JARVIS".into());
+    let title = args.get("title").cloned().unwrap_or_else(|| "NEBULA".into());
     let message = args.get("message").cloned().unwrap_or_default();
 
     if message.is_empty() {
@@ -446,7 +446,7 @@ pub fn remember(args: &HashMap<String, String>) -> String {
 
     let vault_path = dirs::home_dir()
         .unwrap_or_default()
-        .join("Documents/vault/JARVIS/memory/facts.md");
+        .join("Documents/vault/NEBULA/memory/facts.md");
 
     let existing = fs::read_to_string(&vault_path).unwrap_or_default();
     let lines: Vec<&str> = existing.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -479,7 +479,7 @@ pub fn knowledge_search(args: &HashMap<String, String>) -> String {
     // Simple grep-based search across vault
     let vault_path = dirs::home_dir()
         .unwrap_or_default()
-        .join("Documents/vault/JARVIS");
+        .join("Documents/vault/NEBULA");
 
     let result = Command::new("grep")
         .args(["-ril", "--include=*.md", &query, vault_path.to_str().unwrap_or(".")])
@@ -524,7 +524,7 @@ pub fn knowledge_save(args: &HashMap<String, String>) -> String {
 
     let vault_path = dirs::home_dir()
         .unwrap_or_default()
-        .join("Documents/vault/JARVIS")
+        .join("Documents/vault/NEBULA")
         .join(&category);
 
     let _ = fs::create_dir_all(&vault_path);
@@ -623,7 +623,7 @@ pub fn save_person(args: &HashMap<String, String>) -> String {
 
     let vault_path = dirs::home_dir()
         .unwrap_or_default()
-        .join("Documents/vault/JARVIS/people");
+        .join("Documents/vault/NEBULA/people");
     let _ = fs::create_dir_all(&vault_path);
 
     let filename = name.to_lowercase().replace(' ', "-");
@@ -658,7 +658,7 @@ pub fn daily_summary(_args: &HashMap<String, String>) -> String {
     let today = Local::now().format("%Y-%m-%d").to_string();
     let log_path = dirs::home_dir()
         .unwrap_or_default()
-        .join(format!("Documents/vault/JARVIS/logs/{}.md", today));
+        .join(format!("Documents/vault/NEBULA/logs/{}.md", today));
 
     if !log_path.exists() {
         return "No log for today.".into();
@@ -880,7 +880,7 @@ pub fn set_context(args: &HashMap<String, String>) -> String {
 
     let ctx_file = dirs::home_dir()
         .unwrap_or_default()
-        .join("Documents/vault/JARVIS/memory/context.md");
+        .join("Documents/vault/NEBULA/memory/context.md");
 
     if let Some(parent) = ctx_file.parent() {
         let _ = fs::create_dir_all(parent);
@@ -903,7 +903,7 @@ pub fn google_search(args: &HashMap<String, String>) -> String {
     // Try Google Custom Search API first (if configured)
     let config_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/config.json");
+        .join("nebula/config.json");
 
     if let Ok(content) = fs::read_to_string(&config_path) {
         if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -956,7 +956,7 @@ pub fn calendar(args: &HashMap<String, String>) -> String {
     // Load token
     let token_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/google_token.json");
+        .join("nebula/google_token.json");
 
     let access_token = match fs::read_to_string(&token_path) {
         Ok(content) => {
@@ -1067,10 +1067,10 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
 
     let config_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/config.json");
+        .join("nebula/config.json");
     let token_path = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/google_token.json");
+        .join("nebula/google_token.json");
 
     let config_content = fs::read_to_string(&config_path).unwrap_or_default();
     let config: serde_json::Value = serde_json::from_str(&config_content).unwrap_or_default();
@@ -1113,7 +1113,7 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
 
                         // Save device code for polling
                         let pending = serde_json::json!({"device_code": device_code, "client_id": client_id, "client_secret": client_secret});
-                        let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+                        let pending_path = dirs::config_dir().unwrap_or_default().join("nebula/google_pending.json");
                         let _ = fs::write(&pending_path, pending.to_string());
 
                         format!("Go to {} and enter code: {}\n\nThen tell me to run: [TOOL:calendar_auth action=poll]", verification_url, user_code)
@@ -1125,7 +1125,7 @@ pub fn calendar_auth(args: &HashMap<String, String>) -> String {
             }
         }
         "poll" => {
-            let pending_path = dirs::config_dir().unwrap_or_default().join("jarvis/google_pending.json");
+            let pending_path = dirs::config_dir().unwrap_or_default().join("nebula/google_pending.json");
             let pending_content = match fs::read_to_string(&pending_path) {
                 Ok(c) => c,
                 Err(_) => return "No pending auth. Run calendar_auth action=start first.".into(),
@@ -1561,7 +1561,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         let custom_tools_dir = dirs::home_dir()
             .unwrap_or_default()
-            .join("Documents/vault/JARVIS/tools");
+            .join("Documents/vault/NEBULA/tools");
         let _ = fs::create_dir_all(&custom_tools_dir);
 
         Self { custom_tools_dir }

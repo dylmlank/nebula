@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::tools::{parse_tool_calls, ToolRegistry};
 use crate::vault::VaultIndex;
 
-const SYSTEM_PROMPT: &str = "You are JARVIS, an autonomous AI agent. Address the user as \"sir\". Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
+const SYSTEM_PROMPT: &str = "You are NEBULA, an autonomous AI agent. Address the user as \"sir\". Act immediately, never ask permission. No markdown (no #*`_). Plain text only. Be concise. Only use tools when action needed. TOOLS: [TOOL:name arg=value]. Create new: [CREATE_TOOL:name]...code...[/CREATE_TOOL]";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -369,7 +369,7 @@ impl Brain {
         let log_file = logs_dir.join(format!("{}.md", today));
 
         let entry = format!(
-            "\n---\n{}\nUser: {}\nJARVIS: {}\n",
+            "\n---\n{}\nUser: {}\nNEBULA: {}\n",
             timestamp,
             &user_msg[..user_msg.len().min(300)],
             &assistant_msg[..assistant_msg.len().min(800)],

@@ -15,7 +15,7 @@ let isStreaming = false;
 let streamBuffer = "";
 let activeTool: ToolExec | null = null;
 let toolHistory: ToolExec[] = [];
-let theme: "dark" | "light" = (localStorage.getItem("jarvis-theme") as "dark" | "light") || "dark";
+let theme: "dark" | "light" = (localStorage.getItem("nebula-theme") as "dark" | "light") || "dark";
 let currentPanel: "chat" | "vault" | "settings" | "voice" = "chat";
 let vaultResults: VaultResult[] = [];
 let vaultQuery = "";
@@ -25,7 +25,7 @@ let voiceState: "idle" | "listening" | "wake" | "processing" = "idle";
 let voiceTranscript = "";
 let voiceInitiatedMessage = false; // tracks if current message was from voice
 let currentConvoId = "";
-let sidebarOpen = localStorage.getItem("jarvis-sidebar") !== "closed";
+let sidebarOpen = localStorage.getItem("nebula-sidebar") !== "closed";
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -166,7 +166,7 @@ function updateStreamingBubble() {
   const chatArea = document.getElementById("chat-area");
   if (!chatArea) return;
   let bubble = document.getElementById("streaming-bubble");
-  if (!bubble) { bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">JARVIS</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
+  if (!bubble) { bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">NEBULA</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
   const body = bubble.querySelector(".msg-body");
   if (body) body.innerHTML = md(stripToolTokens(streamBuffer));
   chatArea.scrollTop = chatArea.scrollHeight;
@@ -174,7 +174,7 @@ function updateStreamingBubble() {
 
 function updateToolDisplay() {
   let bubble = document.getElementById("streaming-bubble");
-  if (!bubble) { const chatArea = document.getElementById("chat-area"); if (!chatArea) return; bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">JARVIS</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
+  if (!bubble) { const chatArea = document.getElementById("chat-area"); if (!chatArea) return; bubble = document.createElement("div"); bubble.id = "streaming-bubble"; bubble.className = "message assistant anim-in"; bubble.innerHTML = '<div class="msg-label">NEBULA</div><div class="tool-area"></div><div class="msg-body"></div>'; chatArea.appendChild(bubble); }
   const toolArea = bubble.querySelector(".tool-area");
   if (toolArea) {
     toolArea.innerHTML = toolHistory.map(t => {
@@ -208,7 +208,7 @@ function render() {
         <header class="topbar">
           <div class="topbar-left">
             <button class="btn-toggle-sidebar" id="btn-sidebar">${sidebarOpen ? "◀" : "☰"}</button>
-            <div class="topbar-title">JARVIS</div>
+            <div class="topbar-title">NEBULA</div>
             <nav class="topbar-nav">
               <button class="nav-tab ${currentPanel === "chat" ? "active" : ""}" data-panel="chat">Chat</button>
               <button class="nav-tab ${currentPanel === "voice" ? "active" : ""}" data-panel="voice">Voice</button>
@@ -236,13 +236,13 @@ function render() {
 function renderChat(): string {
   const msgs = messages.map(m => {
     const cls = m.role === "user" ? "user" : "assistant";
-    const label = m.role === "user" ? "YOU" : "JARVIS";
+    const label = m.role === "user" ? "YOU" : "NEBULA";
     const body = m.role === "user" ? m.content.replace(/</g, "&lt;").replace(/\n/g, "<br>") : md(stripToolTokens(m.content));
     const tools = m.tools?.length ? `<div class="tool-area">${m.tools.map(t => `<div class="tool-card"><span class="tool-done">✓</span> <span class="tool-name">${t.name}</span> <span class="tool-args">${t.args.replace(/</g, "&lt;")}</span>${t.result ? `<div class="tool-res">${t.result.replace(/</g, "&lt;").slice(0, 120)}</div>` : ""}</div>`).join("")}</div>` : "";
     return `<div class="message ${cls} anim-in"><div class="msg-label">${label}</div>${tools}<div class="msg-body">${body}</div></div>`;
   }).join("");
-  const thinking = isStreaming && !streamBuffer ? '<div class="message assistant anim-in"><div class="msg-label">JARVIS</div><div class="msg-body"><span class="dots"></span></div></div>' : "";
-  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? '<div class="welcome"><div class="welcome-title">JARVIS</div><div class="welcome-sub">At your service, sir.</div></div>' : ""}${msgs}${thinking}</div>`;
+  const thinking = isStreaming && !streamBuffer ? '<div class="message assistant anim-in"><div class="msg-label">NEBULA</div><div class="msg-body"><span class="dots"></span></div></div>' : "";
+  return `<div class="chat-area" id="chat-area">${messages.length === 0 ? '<div class="welcome"><div class="welcome-title">NEBULA</div><div class="welcome-sub">At your service, sir.</div></div>' : ""}${msgs}${thinking}</div>`;
 }
 
 function renderInput(): string {
@@ -255,7 +255,7 @@ function renderInput(): string {
       <button class="qa-btn" data-qa="calendar" title="Calendar">Calendar</button>
     </div>
     <div class="input-bar">
-      <textarea id="chat-input" placeholder="Message JARVIS..." ${isStreaming ? "disabled" : ""}></textarea>
+      <textarea id="chat-input" placeholder="Message NEBULA..." ${isStreaming ? "disabled" : ""}></textarea>
       <button class="btn-send" id="btn-send" ${isStreaming ? "disabled" : ""}>↑</button>
     </div>
   </footer>`;
@@ -263,7 +263,7 @@ function renderInput(): string {
 
 function renderVoiceMode(): string {
   const stateText = {
-    idle: "Say \"Hey JARVIS\" to begin",
+    idle: "Say \"Hey NEBULA\" to begin",
     wake: "Listening...",
     listening: "Recording your voice...",
     processing: "Processing...",
@@ -289,7 +289,7 @@ function renderVoiceMode(): string {
       }
     </div>
     <div class="voice-info">
-      <p>Wake words: "Hey JARVIS", "JARVIS", "Yo JARVIS"</p>
+      <p>Wake words: "Hey NEBULA", "NEBULA", "Yo NEBULA"</p>
       <p>Uses Whisper for speech recognition • Piper for TTS response</p>
     </div>
   </div>`;
@@ -324,7 +324,7 @@ function renderSettings(): string {
 function attachListeners() {
   // Nav
   document.querySelectorAll("[data-panel]").forEach(el => el.addEventListener("click", () => { currentPanel = (el as HTMLElement).dataset.panel as typeof currentPanel; render(); if (currentPanel === "settings") loadSettings(); }));
-  document.getElementById("btn-sidebar")?.addEventListener("click", () => { sidebarOpen = !sidebarOpen; localStorage.setItem("jarvis-sidebar", sidebarOpen ? "open" : "closed"); render(); });
+  document.getElementById("btn-sidebar")?.addEventListener("click", () => { sidebarOpen = !sidebarOpen; localStorage.setItem("nebula-sidebar", sidebarOpen ? "open" : "closed"); render(); });
   document.getElementById("btn-new")?.addEventListener("click", newChat);
 
   // Conversations
@@ -348,7 +348,7 @@ function attachListeners() {
   }));
 
   // Theme
-  document.getElementById("btn-theme")?.addEventListener("click", () => { theme = theme === "dark" ? "light" : "dark"; localStorage.setItem("jarvis-theme", theme); applyTheme(); render(); });
+  document.getElementById("btn-theme")?.addEventListener("click", () => { theme = theme === "dark" ? "light" : "dark"; localStorage.setItem("nebula-theme", theme); applyTheme(); render(); });
 
   // Vault
   const vi = document.getElementById("vault-input") as HTMLInputElement;

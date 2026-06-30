@@ -201,7 +201,7 @@ async fn speak_response(state: tauri::State<'_, AppState>, text: String) -> Resu
 async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/conversations");
+        .join("nebula/conversations");
     let _ = std::fs::create_dir_all(&convos_dir);
 
     let mut convos = Vec::new();
@@ -231,7 +231,7 @@ async fn list_conversations() -> Result<Vec<serde_json::Value>, String> {
 async fn save_conversation(id: String, data: serde_json::Value) -> Result<(), String> {
     let convos_dir = dirs::config_dir()
         .unwrap_or_default()
-        .join("jarvis/conversations");
+        .join("nebula/conversations");
     let _ = std::fs::create_dir_all(&convos_dir);
     let path = convos_dir.join(format!("{}.json", id));
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
@@ -243,7 +243,7 @@ async fn save_conversation(id: String, data: serde_json::Value) -> Result<(), St
 async fn delete_conversation(id: String) -> Result<(), String> {
     let path = dirs::config_dir()
         .unwrap_or_default()
-        .join(format!("jarvis/conversations/{}.json", id));
+        .join(format!("nebula/conversations/{}.json", id));
     let _ = std::fs::remove_file(&path);
     Ok(())
 }
@@ -330,5 +330,5 @@ fn main() {
             speak_response,
         ])
         .run(tauri::generate_context!())
-        .expect("error running JARVIS");
+        .expect("error running NEBULA");
 }

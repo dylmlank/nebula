@@ -62,7 +62,7 @@ impl Default for Config {
             ],
             max_tokens: 4096,
             fast_max_tokens: 2048,
-            vault_path: "~/Documents/vault/JARVIS".into(),
+            vault_path: "~/Documents/vault/NEBULA".into(),
             voice: VoiceConfig {
                 enabled: true,
                 model: "/home/dylan/.local/share/piper-voices/en_US-ryan-high.onnx".into(),
@@ -78,7 +78,7 @@ impl Config {
     pub fn config_path() -> PathBuf {
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("jarvis");
+            .join("nebula");
         config_dir.join("config.json")
     }
 
@@ -101,7 +101,7 @@ impl Config {
         if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
             config.base_url = url;
         }
-        if let Ok(vault) = std::env::var("JARVIS_VAULT") {
+        if let Ok(vault) = std::env::var("NEBULA_VAULT") {
             config.vault_path = vault;
         }
 
